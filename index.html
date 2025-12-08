@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>瞬勤 (Shunkin) - Instant Shift</title>
+    <meta name="description" content="Click & Drag Shift Scheduler">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <i data-lucide="zap" class="logo-icon"></i>
+                <h1 class="app-title">瞬勤 <span class="app-subtitle">Shunkin</span></h1>
+            </div>
+
+            <div class="header-controls">
+                <div class="control-group">
+                    <label for="month-picker">対象月</label>
+                    <input type="month" id="month-picker" class="input-month">
+                </div>
+                <div class="control-group">
+                    <div class="view-toggle">
+                        <button id="btn-view-cal" class="btn btn-sm btn-primary" title="カレンダー表示">
+                            <i data-lucide="calendar"></i>
+                        </button>
+                        <button id="btn-view-timeline" class="btn btn-sm btn-secondary" title="タイムライン表示">
+                            <i data-lucide="table-2"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <div class="control-group">
+                        <label for="optimization-strength">最適化:</label>
+                        <select id="optimization-strength" class="select-strength">
+                            <option value="weak">弱 (速)</option>
+                            <option value="medium" selected>中 (標準)</option>
+                            <option value="strong">強 (精密)</option>
+                        </select>
+                    </div>
+                    <button id="btn-generate" class="btn btn-primary">
+                        <i data-lucide="sparkles"></i> 自動生成
+                    </button>
+                    <button id="btn-reset" class="btn btn-secondary">
+                        <i data-lucide="rotate-ccw"></i> リセット
+                    </button>
+                    <button id="btn-print" class="btn btn-ghost">
+                        <i data-lucide="printer"></i> 印刷
+                    </button>
+                    <button id="btn-export" class="btn btn-ghost icon-only" title="Export JSON">
+                        <i data-lucide="download"></i>
+                    </button>
+                    <button id="btn-import" class="btn btn-ghost icon-only" title="Import JSON">
+                        <i data-lucide="upload"></i>
+                    </button>
+                    <input type="file" id="file-import" accept=".json" style="display: none;">
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-layout">
+
+            <!-- Sidebar: Members & Settings -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <div class="section-header">
+                        <h2>メンバー</h2>
+                        <button id="btn-add-member" class="btn btn-sm btn-outline">
+                            <i data-lucide="plus"></i> 追加
+                        </button>
+                    </div>
+                    <div id="member-list" class="member-list">
+                        <!-- Member items will be injected here -->
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="section-header">
+                        <h2>設定・集計</h2>
+                    </div>
+                    <div class="stats-card">
+                        <div class="stat-item">
+                            <span class="stat-label">稼働日数</span>
+                            <span class="stat-value" id="stat-workdays">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">総出勤枠</span>
+                            <span class="stat-value" id="stat-total-slots">0</span>
+                        </div>
+                    </div>
+
+                    <div class="settings-form">
+                        <h4>曜日設定</h4>
+                        <div class="weekday-settings-grid">
+                            <div class="weekday-setting">
+                                <label>月</label>
+                                <select id="day-mon">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF">休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                            <div class="weekday-setting">
+                                <label>火</label>
+                                <select id="day-tue">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF">休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                            <div class="weekday-setting">
+                                <label>水</label>
+                                <select id="day-wed">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF">休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                            <div class="weekday-setting">
+                                <label>木</label>
+                                <select id="day-thu">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF">休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                            <div class="weekday-setting">
+                                <label>金</label>
+                                <select id="day-fri">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF">休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                            <div class="weekday-setting">
+                                <label style="color:var(--color-sat)">土</label>
+                                <select id="day-sat">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF" selected>休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                            <div class="weekday-setting">
+                                <label style="color:var(--color-sun)">日</label>
+                                <select id="day-sun">
+                                    <option value="WORK">稼働日</option>
+                                    <option value="OFF" selected>休日</option>
+                                    <option value="HALF_AM">AM休</option>
+                                    <option value="HALF_PM">PM休</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Calendar Area -->
+            <section class="calendar-area">
+                <div class="calendar-header-row">
+                    <div class="cal-col-header">月</div>
+                    <div class="cal-col-header">火</div>
+                    <div class="cal-col-header">水</div>
+                    <div class="cal-col-header">木</div>
+                    <div class="cal-col-header">金</div>
+                    <div class="cal-col-header sat">土</div>
+                    <div class="cal-col-header sun">日</div>
+                </div>
+
+                <div id="calendar-grid" class="calendar-grid">
+                    <!-- Calendar days will be injected here -->
+                </div>
+            </section>
+
+            <!-- Timeline Area -->
+            <section id="timeline-container" class="timeline-container" style="display: none;">
+                <!-- Timeline content will be injected here -->
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Print Layout (Invisible on screen) -->
+    <div id="print-area" class="print-area">
+        <!-- Print content injected here -->
+    </div>
+
+    <!-- Scripts -->
+    <script src="script.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+</body>
+
+</html>
