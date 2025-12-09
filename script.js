@@ -30,8 +30,13 @@ let state = {
     settings: {
         yearMonth: new Date().toISOString().slice(0, 7), // "YYYY-MM"
         workDays: {
-            sat: true,
-            sun: false
+            mon: 'WORK',
+            tue: 'WORK',
+            wed: 'WORK',
+            thu: 'WORK',
+            fri: 'WORK',
+            sat: 'OFF',
+            sun: 'OFF'
         },
         baseOff: 8, // default days off per month
         maxConsecutive: 5 // limit consecutive work days
@@ -77,25 +82,34 @@ const els = {
 };
 
 // --- Initialization ---
-function init() {
-    loadState();
-
+// Update input values from state
+function updateUIInputs() {
     // Set initial input values
-    els.monthInput.value = state.settings.yearMonth;
+    if (els.monthInput) els.monthInput.value = state.settings.yearMonth;
 
     // Set weekday dropdowns
     const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
     days.forEach(day => {
         const key = 'day' + day.charAt(0).toUpperCase() + day.slice(1);
         if (els[key]) {
-            els[key].value = state.settings.workDays[day] || (day === 'sat' || day === 'sun' ? 'OFF' : 'WORK');
+            // Default to OFF for sat/sun if undefined, WORK for others
+            // Only if state.settings.workDays exists (safety)
+            const wd = state.settings.workDays || {};
+            els[key].value = wd[day] || (day === 'sat' || day === 'sun' ? 'OFF' : 'WORK');
         }
     });
+}
+
+// --- Initialization ---
+function init() {
+    loadState();
+    updateUIInputs();
 
     // Attach Events
     els.monthInput.addEventListener('change', (e) => updateSetting('yearMonth', e.target.value));
 
     // Weekday settings events
+    const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
     days.forEach(day => {
         const key = 'day' + day.charAt(0).toUpperCase() + day.slice(1);
         if (els[key]) {
@@ -614,24 +628,30 @@ function validateSchedule() {
     });
 
     // Check variance (difference >= 2)
+    // Check variance (difference >= 2)
+    // DISABLED per user request: "メッセージ不要" avoiding automated retries and alerts for variance.
+    /*
     const variance = maxCount - minCount;
     if (variance >= 2) {
         // Find dates with max and min counts
         const maxDates = [];
         const minDates = [];
-
+ 
         Object.entries(dailyCounts).forEach(([dateStr, count]) => {
             if (count === maxCount) maxDates.push(dateStr);
             if (count === minCount) minDates.push(dateStr);
         });
-
+ 
         warnings.push(`📊 日次出勤人数の差が大きすぎます: 最大${maxCount}人 - 最小${minCount}人 = ${variance}人差`);
         warnings.push(`   最大: ${maxDates.join(', ')} (${maxCount}人)`);
         warnings.push(`   最小: ${minDates.join(', ')} (${minCount}人)`);
         warnings.push(`   推奨: 差を1人以内に抑えるため、連続勤務制限を緩和するか、メンバー数を調整してください`);
     }
+    */
 
     // Check if fixed shifts are causing variance issues
+    // DISABLED: variance logic removed
+    /*
     if (variance >= 2) {
         const fixedIssues = analyzeFixedShiftImpact(workDays, dailyCounts, maxCount, minCount);
         if (fixedIssues.length > 0) {
@@ -639,6 +659,7 @@ function validateSchedule() {
             fixedIssues.forEach(issue => warnings.push(`   ${issue}`));
         }
     }
+    */
 
     // Check consecutive work days
     const limit = state.settings.maxConsecutive || 5;
@@ -761,30 +782,7 @@ function handleTimelineCellClick(dateStr, memberId) {
 }
 window.handleTimelineCellClick = handleTimelineCellClick;
 
-// Toggle Lock (Right Click)
-function toggleLock(e, dateStr, memberId) {
-    e.preventDefault();
-    if (!state.fixed[dateStr]) state.fixed[dateStr] = {};
 
-    if (state.fixed[dateStr][memberId]) {
-        delete state.fixed[dateStr][memberId];
-        // If it was 'OFF' and we unlock it, should we keep it as 'OFF'?
-        // The generator might overwrite it if it's not fixed.
-    } else {
-        // Lock current status
-        // If null/undefined -> Lock as OFF
-        const current = state.shifts[dateStr] && state.shifts[dateStr][memberId] ? state.shifts[dateStr][memberId] : 'OFF';
-
-        // Ensure "OFF" is explicitly set in logic so it renders in Timeline
-        if (current === 'OFF') {
-            setShift(dateStr, memberId, 'OFF');
-        }
-
-        state.fixed[dateStr][memberId] = current;
-    }
-    saveState();
-    render();
-}
 
 // --- Toast Notification ---
 function showToast(message, type = "success") {
@@ -1038,15 +1036,15 @@ function renderSidebar() {
     settingsDiv.style.marginTop = '16px';
     settingsDiv.innerHTML = `
         <div class="section-header">
-            <h2>設定 (Settings)</h2>
+            <h2>設定</h2>
         </div>
         <div class="settings-form">
             <div class="control-group">
-                <label>月間休日数 (Base Off):</label>
+                <label>月間休日数:</label>
                 <input type="number" id="inp-base-off" value="${state.settings.baseOff}" min="0" max="31" style="width: 60px; padding: 4px;">
             </div>
             <div class="control-group">
-                <label>連続勤務制限 (Max Cons.):</label>
+                <label>連続勤務制限:</label>
                 <input type="number" id="inp-max-consecutive" value="${state.settings.maxConsecutive || 5}" min="2" max="10" style="width: 60px; padding: 4px;">
             </div>
         </div>
@@ -1072,7 +1070,7 @@ function renderSidebar() {
     conditionsDiv.className = 'sidebar-section';
     conditionsDiv.innerHTML = `
         <div class="section-header">
-            <h2>条件 (Conditions)</h2>
+            <h2>条件</h2>
             <button class="btn btn-sm btn-outline icon-only" onclick="addCondition()">
                 <i data-lucide="plus" style="width:14px; height:14px;"></i>
             </button>
@@ -1288,17 +1286,23 @@ function renderTimeline() {
                 onclick="handleHeaderClick('${dateStr}')" 
                 oncontextmenu="handleHeaderRightClick(event, '${dateStr}')"
                 title="左クリック:人数指定 / 右クリック:メモ追加">
-                <div class="day-num">${dayNum}</div>
-                <div class="day-week">${dayWeek}</div>
-                ${note ? '<div class="marker note"></div>' : ''}
-                ${target ? '<div class="marker target"></div>' : ''}
+                <div style="display:flex; flex-direction:column; justify-content:space-between; height:100%;">
+                    <div>
+                        <div class="day-num">${dayNum}</div>
+                        <div class="day-week">${dayWeek}</div>
+                    </div>
+                    <div>
+                        ${note ? '<div class="marker note"></div>' : ''}
+                        ${target ? '<div class="marker target"></div>' : ''}
+                    </div>
+                </div>
             </th>
         `;
     });
 
     html += `
-                    </tr>
-                </thead>
+                    </tr >
+                </thead >
                 <tbody>
     `;
 
@@ -1312,7 +1316,14 @@ function renderTimeline() {
         if (isDimmed) rowClass += ' dimmed';
 
         html += `<tr class="${rowClass}">`;
-        html += `<td class="timeline-member-cell">${m.name}</td>`;
+
+        // Member Name Cell
+        html += `<td class="timeline-member-cell">
+            <div class="member-info">
+                <div class="member-name">${m.name}</div>
+                ${m.extraOff > 0 ? `<div style="font-size:0.65rem; color:#ef4444;">+休: ${m.extraOff}</div>` : ''}
+            </div>
+        </td>`;
 
         dates.forEach(d => {
             const dateStr = formatDate(d);
@@ -1337,6 +1348,7 @@ function renderTimeline() {
                 html += `
                     <div class="timeline-chip ${typeClass} ${locked ? 'locked' : ''}"
                          draggable="true"
+                         title="${SHIFT_LABELS[shift]}"
                          onclick="event.stopPropagation(); showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
                          oncontextmenu="event.stopPropagation(); toggleLock('${dateStr}', '${m.id}'); return false;"
                          ondragstart="handleDragStart(event, '${m.id}', '${dateStr}')" 
@@ -1379,18 +1391,19 @@ function renderTimeline() {
         html += `
             <td class="timeline-stats-cell">
                 <div class="row-stats">
-                    <span class="stat-item">
-                        <span class="stat-label">出勤:</span>
-                        <span class="stat-value">${workDays}</span>
-                    </span>
-                    <span class="stat-item">
-                        <span class="stat-label">休:</span>
-                        <span class="stat-value">${daysOff}</span>
-                    </span>
-                    <span class="stat-item">
-                        <span class="stat-label">🔒:</span>
-                        <span class="stat-value">${lockedCount}</span>
-                    </span>
+                    <div class="stat-badge">
+                        <span class="stat-badge-label">出勤</span>
+                        <span class="stat-badge-value" style="color:var(--primary);">${workDays}</span>
+                    </div>
+                    <div class="stat-badge">
+                        <span class="stat-badge-label">休日</span>
+                        <span class="stat-badge-value" style="color:var(--text-muted);">${daysOff}</span>
+                    </div>
+                    ${lockedCount > 0 ? `
+                    <div class="stat-badge warn">
+                        <span class="stat-badge-label">固定</span>
+                        <span class="stat-badge-value" style="color:#ef4444;">${lockedCount}</span>
+                    </div>` : ''}
                 </div>
             </td>
         `;
@@ -1401,34 +1414,66 @@ function renderTimeline() {
     html += `
                 </tbody>
                 <tfoot>
-                    <tr>
-                        <td class="timeline-member-cell header">合計</td>
     `;
 
-    // Footer: Daily totals
+    // --- Footer: Multi-row Stats ---
+
+    // Row 1: On-Site Count
+    html += `<tr><td class="timeline-footer-label">出勤人数</td>`;
     dates.forEach(d => {
         const dateStr = formatDate(d);
         const onSiteCount = countOnSite(dateStr);
         const target = state.dailyTargets && state.dailyTargets[dateStr];
 
-        let style = '';
-        if (target && onSiteCount !== parseInt(target)) {
-            style = 'background:#fee2e2; color:#dc2626; font-weight:bold;';
-        }
+        let styleClass = 'timeline-footer-cell';
+        if (target && onSiteCount !== parseInt(target)) styleClass += ' warn';
 
-        html += `
-            <td class="timeline-header-cell" style="${style}">
-                ${onSiteCount}${target ? `/${target}` : ''}
-            </td>
-        `;
+        html += `<td class="${styleClass}">${onSiteCount}</td>`;
     });
+    html += `<td class="timeline-footer-cell"></td></tr>`;
+
+    // Row 2: Off/Other Count (Total - OnSite)
+    html += `<tr><td class="timeline-footer-label">休日/他</td>`;
+    dates.forEach(d => {
+        const dateStr = formatDate(d);
+        const onSiteCount = countOnSite(dateStr);
+        const total = state.members.length;
+        const offCount = total - onSiteCount;
+
+        html += `<td class="timeline-footer-cell" style="color:#64748b;">${offCount}</td>`;
+    });
+    html += `<td class="timeline-footer-cell"></td></tr>`;
+
+    // Row 3: Variance from Target (only if target exists)
+    // Check if any target exists to decide if we show this row
+    const hasTargets = Object.keys(state.dailyTargets || {}).length > 0;
+
+    if (hasTargets) {
+        html += `<tr><td class="timeline-footer-label">目標差分</td>`;
+        dates.forEach(d => {
+            const dateStr = formatDate(d);
+            const onSiteCount = countOnSite(dateStr);
+            const target = state.dailyTargets && state.dailyTargets[dateStr];
+
+            if (target) {
+                const diff = onSiteCount - parseInt(target);
+                let content = diff > 0 ? `+${diff}` : `${diff}`;
+                if (diff === 0) content = "OK";
+
+                let color = diff === 0 ? '#10b981' : (diff > 0 ? '#3b82f6' : '#ef4444');
+                html += `<td class="timeline-footer-cell" style="color:${color}; font-weight:bold;">${content}</td>`;
+            } else {
+                html += `<td class="timeline-footer-cell">-</td>`;
+            }
+        });
+        html += `<td class="timeline-footer-cell"></td></tr>`;
+    }
 
     html += `
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-    `;
+                </tfoot >
+            </table >
+        </div >
+            `;
 
     container.innerHTML = html;
 }
@@ -1559,8 +1604,14 @@ function loadState() {
 }
 
 // --- Export / Import ---
+// --- Export / Import ---
 function exportData() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+    // Add version to export
+    const exportData = {
+        version: 1,
+        ...state
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
     downloadAnchorNode.setAttribute("download", `shunkin_${state.settings.yearMonth}.json`);
@@ -1582,13 +1633,14 @@ function importData(event) {
                 alert("無効なファイル形式です");
                 return;
             }
-            state = parsed;
+            // Remove version key if present before setting state
+            const { version, ...cleanData } = parsed;
+
+            state = cleanData;
             saveState();
             render();
             // Update inputs
-            els.monthInput.value = state.settings.yearMonth;
-            els.chkSat.checked = state.settings.workDays.sat;
-            els.chkSun.checked = state.settings.workDays.sun;
+            updateUIInputs();
             alert("インポートしました");
         } catch (err) {
             console.error(err);
