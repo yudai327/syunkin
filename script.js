@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Shunkin - Instant Shift
  * Vanilla JS Implementation
  */
@@ -19,8 +19,8 @@ const SHIFT_ICONS = {
 // Shift type labels
 const SHIFT_LABELS = {
     ON_SITE: '出勤',
-    HALF_AM: 'AM休',
-    HALF_PM: 'PM休',
+    HALF_AM: 'AM半休',
+    HALF_PM: 'PM半休',
     TRIP: '出張',
     OFF: '休日'
 };
@@ -53,7 +53,10 @@ let state = {
     // Constraints: { "YYYY-MM-DD": { memberId: "OFF" | "TRIP" } }
     fixed: {},
     // Conditions: [{ type: 'TOGETHER'|'SEPARATE', m1: id, m2: id }]
-    conditions: []
+    // Conditions: [{ type: 'TOGETHER'|'SEPARATE', m1: id, m2: id }]
+    conditions: [],
+    // Last Holiday Date for each member per month: "YYYY-MM" -> { memberId: "YYYY-MM-DD" }
+    lastHolidays: {}
 };
 
 // --- DOM Elements ---
@@ -313,6 +316,157 @@ window.handleHeaderRightClick = function (e, dateStr) {
 };
 
 // --- Logic: Generator (Heuristic) ---
+// --- Last Holiday Logic ---
+
+function getPrevMonth(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    let py = y;
+    let pm = m - 1;
+    if (pm === 0) {
+        pm = 12;
+        py--;
+    }
+    return `${py}-${('0' + pm).slice(-2)}`;
+}
+
+function getNextMonth(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    let ny = y;
+    let nm = m + 1;
+    if (nm === 13) {
+        nm = 1;
+        ny++;
+    }
+    return `${ny}-${('0' + nm).slice(-2)}`;
+}
+
+function findLastHolidayInMonth(memberId, ym) {
+    // Check if we have shift data for ym
+    const distinctDates = getMatchMonthDates(ym);
+    if (distinctDates.length === 0) return null;
+
+    // Search backwards from end of month
+    // Sort desc
+    distinctDates.sort((a, b) => new Date(b) - new Date(a));
+
+    for (const dateStr of distinctDates) {
+        const shift = getShift(dateStr, memberId);
+        const isWorking = (shift === 'ON_SITE' || shift === 'TRIP' || shift === 'HALF_AM' || shift === 'HALF_PM');
+        if (!isWorking || shift === 'OFF') {
+            return dateStr;
+        }
+    }
+    return null;
+}
+
+function getDefaultLastHoliday(memberId) {
+    const currentYM = state.settings.yearMonth;
+    // If it's the very first time and we have NO stored yearMonth, default logic might fail.
+    // But init guarantees state.settings.yearMonth
+    const prevYM = getPrevMonth(currentYM);
+
+    // 1. Try to find in previous month data
+    const detected = findLastHolidayInMonth(memberId, prevYM);
+    if (detected) return detected;
+
+    // 2. Default to last day of previous month
+    // Calculate last day of prevYM
+    const [y, m] = prevYM.split('-').map(Number);
+    const lastDay = new Date(y, m, 0); // Day 0 of next month is last day of this month (m is 1-based but Date() month is 0-based... wait)
+    // Date(year, monthIndex, day)
+    // prevYM = "2023-11" -> y=2023, m=11.
+    // new Date(2023, 11, 0) -> "2023-11-30" (December 0th)
+    return formatDate(lastDay);
+}
+
+function getLastHoliday(memberId) {
+    const ym = state.settings.yearMonth;
+    // Explicitly set value?
+    if (state.lastHolidays && state.lastHolidays[ym] && state.lastHolidays[ym][memberId]) {
+        return state.lastHolidays[ym][memberId];
+    }
+    // Otherwise return default
+    return getDefaultLastHoliday(memberId);
+}
+
+function setLastHoliday(memberId, dateStr) {
+    const ym = state.settings.yearMonth;
+    if (!state.lastHolidays) state.lastHolidays = {};
+    if (!state.lastHolidays[ym]) state.lastHolidays[ym] = {};
+
+    if (dateStr) {
+        state.lastHolidays[ym][memberId] = dateStr;
+    } else {
+        delete state.lastHolidays[ym][memberId];
+    }
+    saveState();
+    // Re-render to show (potential) new default
+    renderSidebar();
+    showToast(`${dateStr ? '設定' : '自動(デフォルト)'}: 前月最終休日`, "success");
+}
+
+window.updateLastHoliday = function (memberId, val) {
+    setLastHoliday(memberId, val);
+}
+
+window.autoDetectLastHoliday = function (memberId) {
+    const currentYM = state.settings.yearMonth;
+    const prevYM = getPrevMonth(currentYM);
+
+    const foundDate = findLastHolidayInMonth(memberId, prevYM);
+
+    if (foundDate) {
+        setLastHoliday(memberId, foundDate);
+    } else {
+        showToast(`前月のデータから休日が見つかりませんでした`, "warning");
+        // We do NOT set default here if failed, user can just leave it empty to use fallback default
+    }
+};
+
+function updateNextMonthLastHolidays(currentYM) {
+    const nextYM = getNextMonth(currentYM);
+    let counted = 0;
+    const updates = [];
+
+    state.members.forEach(m => {
+        // Find last holiday in CURRENT generated month
+        const lastHoliday = findLastHolidayInMonth(m.id, currentYM);
+
+        if (lastHoliday) {
+            if (!state.lastHolidays) state.lastHolidays = {};
+            if (!state.lastHolidays[nextYM]) state.lastHolidays[nextYM] = {};
+
+            // Only update if different? Or always overwrite ensures sync?
+            // Always overwrite is safer for "Auto Update"
+            const oldVal = state.lastHolidays[nextYM][m.id];
+            state.lastHolidays[nextYM][m.id] = lastHoliday;
+
+            if (oldVal !== lastHoliday) {
+                counted++;
+                updates.push(`${m.name}:${lastHoliday.slice(8)}`);
+            }
+        }
+    });
+
+    if (counted > 0) {
+        console.log(`Updated next month (${nextYM}) last holidays for ${counted} members:`, updates);
+        // Show example in toast to prove update
+        const example = updates.length > 0 ? ` (例: ${updates[0]})` : '';
+        showToast(`翌月(${nextYM})の[前月最終休日]を更新しました (${counted}名${example})`, "success");
+    } else {
+        console.log(`Checked next month (${nextYM}) update. No changes necessary or no holidays found.`);
+    }
+}
+
+function getMatchMonthDates(ym) {
+    // Helper to find all dates in state.shifts that start with YYYY-MM
+    // This is for auto-detect when we might have partial data
+    // Ideally we strictly generate days in month, but if we have holes, we check existing keys.
+    // Better: generate all days in that month and check.
+    const days = getDaysInMonth(ym);
+    return days.map(d => formatDate(d));
+}
+
 // --- Logic: Generator (Optimization) ---
 function resetSchedule() {
     if (!confirm("現在のシフトと固定設定を全てリセットしますか？")) return;
@@ -330,15 +484,57 @@ function generateSchedule(retryCount = 0) {
         // Helper: Check if fixed
         const isFixed = (dateStr, mId) => state.fixed[dateStr] && state.fixed[dateStr][mId];
 
-        // 1. Initialize Shifts
-        const newShifts = {};
-        // Copy fixed
-        Object.keys(state.fixed || {}).forEach(date => {
-            if (!newShifts[date]) newShifts[date] = {};
-            Object.keys(state.fixed[date]).forEach(mId => {
-                newShifts[date][mId] = state.fixed[date][mId];
-            });
+        // 1. Initialize Shifts (Preserve other months)
+        // We want to keep shifts that are NOT in the current month range.
+        // But we DO want to reset shifts in the current month (unless fixed).
+
+        // Clone existing shifts
+        const newShifts = { ...state.shifts };
+
+        // Clear current month's non-fixed shifts
+        dates.forEach(d => {
+            const dateStr = formatDate(d);
+
+            // If we have fixed data, ensure it is set
+            if (state.fixed[dateStr]) {
+                if (!newShifts[dateStr]) newShifts[dateStr] = {};
+                Object.keys(state.fixed[dateStr]).forEach(mId => {
+                    newShifts[dateStr][mId] = state.fixed[dateStr][mId];
+                });
+            } else {
+                // If it was just a normal generated day, maybe clear it?
+                // But wait, the logic below (Step 2) iterates members and SETS shifts.
+                // So simply ensuring newShifts[dateStr] exists is enough to start overwriting?
+                // Actually, if we don't clear, old generated data might persist if logic doesn't overwrite everything.
+                // But Step 2 iterates ALL members and ALL dates in month to set initial content.
+                // It does: if (!isWorkDay) set OFF. Then later fills work days.
+                // So it effectively overwrites.
+
+                // However, to be safe and clean, let's reset the day object if it exists and isn't fixed.
+                // But wait, fixed is granular per member. 
+                // So we should keep the day object, but maybe clear non-fixed members?
+
+                if (!newShifts[dateStr]) newShifts[dateStr] = {};
+            }
+
+            // Sync fixed data rigorously
+            if (state.fixed[dateStr]) {
+                if (!newShifts[dateStr]) newShifts[dateStr] = {};
+                Object.assign(newShifts[dateStr], state.fixed[dateStr]);
+            }
+
+            // CRITICAL FIX: Clear non-fixed shifts for this date to ensure re-generation
+            if (newShifts[dateStr]) {
+                state.members.forEach(m => {
+                    // If member is NOT fixed for this date, clear their slot
+                    if (!state.fixed[dateStr] || !state.fixed[dateStr][m.id]) {
+                        delete newShifts[dateStr][m.id];
+                    }
+                });
+            }
         });
+
+        // Update state reference to this working copy
         state.shifts = newShifts;
 
         // 2. Initial Random Fill (Satisfy Quotas)
@@ -381,27 +577,13 @@ function generateSchedule(retryCount = 0) {
 
             const neededWork = targetWork - currentWork;
 
-            // Prioritize Mon-Fri for Work assignment
-            // If we just shuffle all, specific weekdays (Mon-Fri) might be dropped for Saturday.
-            // User likely wants Mon-Fri to be 'Base' work, and Saturday to be 'Extra' if quota allows.
-            const priorityDays = []; // Mon-Fri
-            const secondaryDays = []; // Sat (if enabled)
-
-            availableWorkDays.forEach(ds => {
-                const date = new Date(ds); // naive parse
-                const day = date.getDay();
-                if (day >= 1 && day <= 5) priorityDays.push(ds);
-                else secondaryDays.push(ds);
-            });
-
-            // Shuffle each group
-            priorityDays.sort(() => Math.random() - 0.5);
-            secondaryDays.sort(() => Math.random() - 0.5);
-
-            // Combine: Priority first
-            // If neededWork < priorityDays.length, we drop some Mon-Fri (unavoidable if high baseOff)
-            // If neededWork > priorityDays.length, we fill all Mon-Fri and take some Sat.
-            const sortedAvailable = [...priorityDays, ...secondaryDays];
+            // Treat all available work days equally for initial assignment
+            // Use Fisher-Yates shuffle for true uniform randomness
+            const sortedAvailable = [...availableWorkDays];
+            for (let i = sortedAvailable.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [sortedAvailable[i], sortedAvailable[j]] = [sortedAvailable[j], sortedAvailable[i]];
+            }
 
             sortedAvailable.forEach((dateStr, idx) => {
                 if (idx < neededWork) {
@@ -424,6 +606,12 @@ function generateSchedule(retryCount = 0) {
 
         // 3. Optimization Loop (Swap-based Hill Climbing)
         // Goal: Minimize Variance of Daily Attendance + Penalty for Consecutive > N + Conditions
+
+        // Pre-calculate Last Holidays to avoid repeated calls in loop
+        const cachedLastHolidays = {};
+        state.members.forEach(m => {
+            cachedLastHolidays[m.id] = getLastHoliday(m.id);
+        });
 
         function calculateScore() {
             let score = 0;
@@ -450,26 +638,61 @@ function generateSchedule(retryCount = 0) {
                 }
 
                 // Variance tracking
-                if (count < minCount) minCount = count;
-                if (count > maxCount) maxCount = count;
+                // MODIFIED: Exclude HALF_AM/PM/OFF from variance calculation to match validation logic
+                // We typically only want to flatten "Full Work" days.
+                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                const dayKey = dayNames[d.getDay()];
+                const setting = state.settings.workDays[dayKey];
+
+                if (setting !== 'HALF_AM' && setting !== 'HALF_PM' && setting !== 'OFF') {
+                    // Start of Variance Input
+                    const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
+                    if (!hasTarget) {
+                        if (count < minCount) minCount = count;
+                        if (count > maxCount) maxCount = count;
+                    }
+                }
 
                 score += (count * count) * 10; // Smoothing weight
             });
 
             // Strict Variance Penalty (Max - Min must be < 2, i.e. 0 or 1)
-            if ((maxCount - minCount) >= 2) {
-                score += 2000; // Significant penalty to force flatness
+            // INCREASED penalty per user request to force flatness
+            if (maxCount !== -1 && (maxCount - minCount) >= 2) {
+                const diff = maxCount - minCount;
+                score += diff * 10000; // Aggressive scaled penalty (e.g. diff 2 -> +20000, diff 3 -> +30000)
             }
 
             // B. Consecutive Shifts (Penalty for > N)
             const limit = state.settings.maxConsecutive || 5;
             state.members.forEach(m => {
                 let consecutive = 0;
+
+                // Initialize consecutive based on last holiday
+                const lh = cachedLastHolidays[m.id];
+                if (lh) {
+                    const startOfMonth = dates[0];
+                    const lhDate = new Date(lh);
+                    // Time difference in days
+                    const diffTime = startOfMonth - lhDate;
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    // e.g. LH=Nov30, Start=Dec1 -> diff=1 -> cons=0
+                    // e.g. LH=Nov29, Start=Dec1 -> diff=2 -> cons=1 (worked Nov30)
+                    if (diffDays > 1) {
+                        consecutive = diffDays - 1;
+                    }
+                }
+
                 dates.forEach(d => {
                     const s = getShift(formatDate(d), m.id);
                     if (getShiftDays(s) > 0) { // Any work (full or half day)
                         consecutive++;
-                        if (consecutive > limit) score += 1000; // Heavy Penalty
+                        if (consecutive > limit) score += 1000; // Hard Penalty for exceeding limit
+
+                        // Soft Penalty: Prefer shorter streaks even if within limit
+                        // e.g. 5 days = 25, 2 days = 4. 2+3=13 vs 5=25.
+                        // Weighting needs to be high enough to matter but low enough not to override quotas
+                        score += Math.pow(consecutive, 2) * 10;
                     } else {
                         consecutive = 0;
                     }
@@ -498,6 +721,85 @@ function generateSchedule(retryCount = 0) {
         }
 
         let currentScore = calculateScore();
+
+        // 2-B. Directed Flattening (Deterministic)
+        // Before random optimization, try to forcibly flatten the daily counts to Max-Min <= 1
+        // by moving one person from MaxDay to MinDay.
+        for (let k = 0; k < state.members.length * 3; k++) {
+            // 1. Calculate current counts
+            const dailyCounts = {};
+            let minC = 9999, maxC = -1;
+            let minDates = [], maxDates = [];
+
+            workDays.forEach(d => {
+                const dateStr = formatDate(d);
+                // SKIP half-day settings and TARGET days from variance calculation
+                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                const setting = state.settings.workDays[dayNames[d.getDay()]];
+
+                const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
+                if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF' || hasTarget) return;
+
+                let c = 0;
+                state.members.forEach(m => c += getShiftDays(getShift(dateStr, m.id)));
+                dailyCounts[dateStr] = c;
+
+                if (c < minC) minC = c;
+                if (c > maxC) maxC = c;
+            });
+
+            Object.entries(dailyCounts).forEach(([ds, c]) => {
+                if (c === minC) minDates.push(ds);
+                if (c === maxC) maxDates.push(ds);
+            });
+
+            // If already flat enough, stop
+            if (maxC - minC < 2) break;
+
+            // 2. Try to move a shift from MaxDay -> MinDay
+            let moved = false;
+            // Try random pair of max/min dates to avoid stuck loops
+            const maxD = maxDates[Math.floor(Math.random() * maxDates.length)];
+            const minD = minDates[Math.floor(Math.random() * minDates.length)];
+
+            // Identify a member who is Working on MaxD AND NOT Working on MinD
+            // AND not fixed on either.
+            const candidates = state.members.filter(m => {
+                if (isFixed(maxD, m.id) || isFixed(minD, m.id)) return false;
+                const sMax = getShift(maxD, m.id);
+                const sMin = getShift(minD, m.id);
+                // Working on Max (ON_SITE/TRIP) and OFF on Min
+                return (getShiftDays(sMax) >= 1 && getShiftDays(sMin) === 0 && sMin === 'OFF');
+            });
+
+            if (candidates.length > 0) {
+                // Pick one
+                const m = candidates[Math.floor(Math.random() * candidates.length)];
+                const sMax = getShift(maxD, m.id); // e.g. ON_SITE
+
+                // Move: MaxD -> OFF, MinD -> sMax (preserving type usually ON_SITE)
+                // But check MinD weekday setting
+                const getWorkType = (dString) => {
+                    const d = new Date(dString);
+                    const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                    const setting = state.settings.workDays[dayNames[d.getDay()]];
+                    if (setting === 'HALF_AM') return 'HALF_AM';
+                    if (setting === 'HALF_PM') return 'HALF_PM';
+                    return 'ON_SITE';
+                };
+
+                const newSMin = getWorkType(minD);
+
+                setShift(maxD, m.id, 'OFF');
+                setShift(minD, m.id, newSMin);
+                moved = true;
+
+                // Update score for next iteration
+                currentScore = calculateScore();
+            }
+
+            if (!moved) break; // Could not find any valid move to improve
+        }
 
         // Get optimization strength from UI
         const strength = els.optimizationStrength ? els.optimizationStrength.value : 'medium';
@@ -570,6 +872,9 @@ function generateSchedule(retryCount = 0) {
             return generateSchedule(retryCount + 1);
         }
 
+        // --- Auto-Update Next Month ---
+        updateNextMonthLastHolidays(state.settings.yearMonth);
+
         saveState();
         render();
 
@@ -630,6 +935,55 @@ function validateSchedule() {
     // Check variance (difference >= 2)
     // Check variance (difference >= 2)
     // DISABLED per user request: "メッセージ不要" avoiding automated retries and alerts for variance.
+    // Check Daily Variance (difference >= 2) per user request
+    const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+    // First pass: Recalculate max/min considering ONLY full work days
+    let validMaxCount = -1;
+    let validMinCount = 9999;
+    let hasValidDays = false;
+
+    Object.entries(dailyCounts).forEach(([dateStr, count]) => {
+        const d = new Date(dateStr);
+        const dayKey = dayNames[d.getDay()];
+        const setting = state.settings.workDays[dayKey];
+        // Skip if setting is HALF_AM or HALF_PM or OFF OR has Target
+        if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF') return;
+        const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
+        if (hasTarget) return;
+
+        hasValidDays = true;
+        if (count > validMaxCount) validMaxCount = count;
+        if (count < validMinCount) validMinCount = count;
+    });
+
+    if (hasValidDays) {
+        const variance = validMaxCount - validMinCount;
+        if (variance >= 2) {
+            // Find dates with max and min counts
+            const maxDates = [];
+            const minDates = [];
+
+            Object.entries(dailyCounts).forEach(([dateStr, count]) => {
+                const d = new Date(dateStr);
+                const dayKey = dayNames[d.getDay()];
+                const setting = state.settings.workDays[dayKey];
+
+                const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
+                if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF' || hasTarget) return;
+
+                if (count === validMaxCount) maxDates.push(dateStr);
+                if (count === validMinCount) minDates.push(dateStr);
+            });
+
+            warnings.push(`📊 日次出勤人数の差が大きすぎます: 最大${validMaxCount}人 - 最小${validMinCount}人 = ${variance}人差`);
+            warnings.push(`   最大: ${maxDates.join(', ')} (${validMaxCount}人)`);
+            warnings.push(`   最小: ${minDates.join(', ')} (${validMinCount}人)`);
+            warnings.push(`   推奨: 差を1人以内に抑えるため、連続勤務制限を緩和するか、メンバー数を調整してください`);
+            warnings.push(`   (※休日・半休設定・人数指定ありの日は判定から除外しています)`);
+        }
+    }
+
     /*
     const variance = maxCount - minCount;
     if (variance >= 2) {
@@ -639,7 +993,7 @@ function validateSchedule() {
  
         Object.entries(dailyCounts).forEach(([dateStr, count]) => {
             if (count === maxCount) maxDates.push(dateStr);
-            if (count === minCount) minDates.push(dateStr);
+            if (count === minDates) minDates.push(dateStr);
         });
  
         warnings.push(`📊 日次出勤人数の差が大きすぎます: 最大${maxCount}人 - 最小${minCount}人 = ${variance}人差`);
@@ -655,7 +1009,7 @@ function validateSchedule() {
     if (variance >= 2) {
         const fixedIssues = analyzeFixedShiftImpact(workDays, dailyCounts, maxCount, minCount);
         if (fixedIssues.length > 0) {
-            warnings.push(`⚠️ 固定設定が出勤人数の偏りを引き起こしています:`);
+            warnings.push(`⚠️ 固定設定が出勤人数の偏りを引き起こしています`);
             fixedIssues.forEach(issue => warnings.push(`   ${issue}`));
         }
     }
@@ -665,8 +1019,20 @@ function validateSchedule() {
     const limit = state.settings.maxConsecutive || 5;
     state.members.forEach(m => {
         let consecutive = 0;
-        let maxConsecutive = 0;
-        let violationDates = [];
+
+        // Initialize consecutive based on last holiday
+        const lh = getLastHoliday(m.id);
+        if (lh) {
+            const startOfMonth = dates[0];
+            const lhDate = new Date(lh);
+            const diffTime = startOfMonth - lhDate;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diffDays > 1) {
+                consecutive = diffDays - 1;
+            }
+        }
+
+        let maxConsecutive = consecutive; // Start max with initial carry-over
 
         dates.forEach(d => {
             const s = getShift(formatDate(d), m.id);
@@ -674,7 +1040,11 @@ function validateSchedule() {
                 consecutive++;
                 if (consecutive > maxConsecutive) maxConsecutive = consecutive;
                 if (consecutive > limit) {
-                    violationDates.push(formatDate(d));
+                    // Only push if not already warned for this sequence/date? 
+                    // Actually, just pushing dates is fine.
+                    // But we might duplicate warnings if we are not careful.
+                    // For now simple push.
+                    // violationDates.push(formatDate(d));
                 }
             } else {
                 consecutive = 0;
@@ -682,7 +1052,34 @@ function validateSchedule() {
         });
 
         if (maxConsecutive > limit) {
-            warnings.push(`👤 ${m.name}: 連続${maxConsecutive}日勤務 (制限: ${limit}日)`);
+            // Recalculate strict violation dates for display
+            // This is a bit lazy but ensures accuracy
+            let tempCons = 0;
+            if (lh) {
+                const diffVideo = Math.ceil((dates[0] - new Date(lh)) / (86400000));
+                if (diffVideo > 1) tempCons = diffVideo - 1;
+            }
+
+            let violatedRanges = [];
+            let currentRangeStart = null;
+
+            dates.forEach(d => {
+                const s = getShift(formatDate(d), m.id);
+                if (getShiftDays(s) > 0) {
+                    if (tempCons === 0) currentRangeStart = formatDate(d); // Start of working streak
+                    tempCons++;
+                } else {
+                    if (tempCons > limit) {
+                        // End of a violation streak
+                        // violatedRanges.push(...)
+                    }
+                    tempCons = 0;
+                    currentRangeStart = null;
+                }
+            });
+            // Check if ended in violation
+            // Simplified warning message:
+            warnings.push(`👤 ${m.name}: 連続${maxConsecutive}日勤務 (制限: ${limit}日) ※前月考慮`);
         }
     });
 
@@ -746,7 +1143,7 @@ function toggleShiftStatus(dateStr, memberId) {
     if (!state.shifts[dateStr]) state.shifts[dateStr] = {};
     const current = state.shifts[dateStr][memberId];
 
-    // Cycle: ON_SITE → TRIP → OFF → HALF_AM → HALF_PM → ON_SITE
+    // Cycle: ON_SITE -> TRIP -> OFF -> HALF_AM -> HALF_PM -> ON_SITE
     let next = 'ON_SITE';
     if (current === 'ON_SITE') next = 'TRIP';
     else if (current === 'TRIP') next = 'OFF';
@@ -786,16 +1183,23 @@ window.handleTimelineCellClick = handleTimelineCellClick;
 
 // --- Toast Notification ---
 function showToast(message, type = "success") {
-    // Create toast element
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
 
-    // Add to body
-    document.body.appendChild(toast);
+    // Append to container
+    container.appendChild(toast);
 
     // Trigger animation
-    setTimeout(() => toast.classList.add('show'), 10);
+    requestAnimationFrame(() => toast.classList.add('show'));
 
     // Remove after 3 seconds
     setTimeout(() => {
@@ -948,7 +1352,7 @@ function showShiftTypeSelector(e, dateStr, memberId, parentMenu) {
     if (parentMenu) {
         const backItem = document.createElement('div');
         backItem.className = 'context-menu-item context-menu-item-all';
-        backItem.innerHTML = '← 戻る';
+        backItem.innerHTML = '←戻る';
         backItem.onclick = () => {
             menu.remove();
             showContextMenu(e, dateStr);
@@ -987,8 +1391,7 @@ function renderSidebar() {
         const div = document.createElement('div');
         div.className = `member-item ${uiState.focusedMemberId === m.id ? 'focused' : ''}`;
         div.style.display = 'flex';
-        div.style.alignItems = 'center';
-        div.style.justifyContent = 'space-between';
+        div.style.flexDirection = 'column';
         div.style.gap = '8px';
         div.style.padding = '8px';
         div.style.marginBottom = '4px';
@@ -1005,14 +1408,29 @@ function renderSidebar() {
             render();
         };
 
+        const lastHolidayVal = getLastHoliday(m.id);
+
         div.innerHTML = `
-            <div style="flex:1; font-weight:500;">${m.name}</div>
-            <div style="display:flex; align-items:center; gap:4px;">
-                <span style="font-size:0.7rem; color:var(--text-muted);">追加休:</span>
-                <input type="number" value="${m.extraOff}" min="0" style="width:40px; padding:2px; font-size:0.8rem; border:1px solid var(--border); border-radius:4px;"
-                    onchange="updateMember('${m.id}', 'extraOff', this.value)" onClick="event.stopPropagation()">
-                <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); deleteMember('${m.id}')" style="padding:4px; color:#ef4444;">
-                    <i data-lucide="trash-2" style="width:14px; height:14px;"></i>
+            <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
+                <div style="font-weight:500;">${m.name}</div>
+                <div style="display:flex; align-items:center; gap:4px;">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">追加オフ</span>
+                    <input type="number" value="${m.extraOff}" min="0" style="width:40px; padding:2px; font-size:0.8rem; border:1px solid var(--border); border-radius:4px;"
+                        onchange="updateMember('${m.id}', 'extraOff', this.value)" onClick="event.stopPropagation()">
+                    <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); deleteMember('${m.id}')" style="padding:4px; color:#ef4444;">
+                        <i data-lucide="trash-2" style="width:14px; height:14px;"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div style="display:flex; align-items:center; gap:4px; font-size:0.75rem; border-top:1px dashed #eee; padding-top:4px;">
+                <label style="color:var(--text-muted);">前月最終休日:</label>
+                <input type="date" id="lh-${m.id}" value="${lastHolidayVal}" 
+                    style="flex:1; border:1px solid var(--border); border-radius:4px; padding:2px; font-size:0.7rem;"
+                    onchange="updateLastHoliday('${m.id}', this.value)" onClick="event.stopPropagation()">
+                <button class="btn btn-sm btn-outline icon-only" title="自動取得" 
+                    onclick="event.stopPropagation(); autoDetectLastHoliday('${m.id}')" style="padding:2px 4px;">
+                    <i data-lucide="refresh-cw" style="width:12px; height:12px;"></i>
                 </button>
             </div>
         `;
@@ -1167,7 +1585,7 @@ function renderCalendar() {
                     <span class="cal-date ${isToday ? 'today' : ''}">
                         ${d.getDate()} <small>(${weekDay})</small>
                     </span>
-                    ${target ? `<span style="font-size:0.7rem; background:#e0f2fe; color:#0369a1; padding:1px 3px; border-radius:3px;">求:${target}</span>` : ''}
+                    ${target ? `<span style="font-size:0.7rem; background:#e0f2fe; color:#0369a1; padding:1px 3px; border-radius:3px;">目標${target}</span>` : ''}
                 </div>
                 ${note ? `<div style="font-size:0.75rem; color:#d97706; font-weight:bold;">${note}</div>` : ''}
             </div>
@@ -1321,7 +1739,7 @@ function renderTimeline() {
         html += `<td class="timeline-member-cell">
             <div class="member-info">
                 <div class="member-name">${m.name}</div>
-                ${m.extraOff > 0 ? `<div style="font-size:0.65rem; color:#ef4444;">+休: ${m.extraOff}</div>` : ''}
+                ${m.extraOff > 0 ? `<div style="font-size:0.65rem; color:#ef4444;">+オフ ${m.extraOff}</div>` : ''}
             </div>
         </td>`;
 
@@ -1449,7 +1867,7 @@ function renderTimeline() {
     const hasTargets = Object.keys(state.dailyTargets || {}).length > 0;
 
     if (hasTargets) {
-        html += `<tr><td class="timeline-footer-label">目標差分</td>`;
+        html += `<tr><td class="timeline-footer-label">目標差異</td>`;
         dates.forEach(d => {
             const dateStr = formatDate(d);
             const onSiteCount = countOnSite(dateStr);
@@ -1482,7 +1900,13 @@ function renderTimeline() {
 
 function countOnSite(dateStr) {
     if (!state.shifts[dateStr]) return 0;
-    return Object.values(state.shifts[dateStr]).filter(s => s === 'ON_SITE').length;
+    // Iterate only active members to avoid counting deleted "ghost" members
+    let count = 0;
+    state.members.forEach(m => {
+        const s = state.shifts[dateStr][m.id];
+        if (s === 'ON_SITE') count++;
+    });
+    return count;
 }
 
 function updateStats() {
@@ -1505,7 +1929,7 @@ function updateStats() {
     // Average
     const avg = activeMemberCount > 0 ? (totalAssigned / activeMemberCount).toFixed(1) : 0;
 
-    els.statTotalSlots.innerHTML = `${totalAssigned} <small>(平均 ${avg}日)</small>`;
+    els.statTotalSlots.innerHTML = `${totalAssigned} <small>(平均${avg}日)</small>`;
 }
 
 
@@ -1535,7 +1959,7 @@ function handleDrop(e, toDate) {
 
     // Check if destination is locked
     if (state.fixed[toDate] && state.fixed[toDate][memberId]) {
-        alert("移動先が固定されています");
+        alert("移動先が固定されています。");
         dragSource = null;
         return;
     }
@@ -1544,7 +1968,7 @@ function handleDrop(e, toDate) {
     if (fromDate) {
         status = state.shifts[fromDate][memberId] || 'ON_SITE';
         if (state.fixed[fromDate] && state.fixed[fromDate][memberId]) {
-            alert("移動元が固定されています");
+            alert("移動元が固定されています。");
             dragSource = null;
             return;
         }
@@ -1706,7 +2130,7 @@ function handleTimelineDrop(e, toDate, toMemberId) {
 
     // Validations
     if (state.fixed[toDate] && state.fixed[toDate][destMemberId]) {
-        alert("移動先が固定されています");
+        alert("移動先が固定されています。");
         dragSource = null;
         return;
     }
@@ -1716,7 +2140,7 @@ function handleTimelineDrop(e, toDate, toMemberId) {
         status = state.shifts[fromDate][srcMemberId] || 'ON_SITE';
 
         if (state.fixed[fromDate] && state.fixed[fromDate][srcMemberId]) {
-            alert("移動元が固定されています");
+            alert("移動元が固定されています。");
             dragSource = null;
             return;
         }
