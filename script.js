@@ -122,10 +122,294 @@ function init() {
 
     els.btnGenerate.addEventListener('click', generateSchedule);
     els.btnReset.addEventListener('click', resetSchedule);
-    els.btnPrint.addEventListener('click', () => window.print());
+    els.btnPrint.addEventListener('click', () => {
+        preparePrint();
+        window.print();
+    });
     els.btnAddMember.addEventListener('click', addMember);
 
     render();
+}
+
+// --- Print Logic ---
+function preparePrint() {
+    const printArea = document.getElementById('print-area');
+    if (!printArea) return;
+    printArea.innerHTML = ''; // Clear
+
+    const ym = state.settings.yearMonth;
+
+    // 1. Title
+    const header = document.createElement('div');
+    header.className = 'print-header';
+    header.innerHTML = `<h1>${ym} シフト表</h1>`;
+    printArea.appendChild(header);
+
+    // 2. Table
+    const table = document.createElement('table');
+    table.className = 'print-calendar';
+
+    // Header Row
+    const thead = document.createElement('thead');
+    const trHead = document.createElement('tr');
+    DAYS_JP.forEach(d => {
+        const th = document.createElement('th');
+        th.textContent = d;
+        trHead.appendChild(th);
+    });
+    thead.appendChild(trHead);
+    table.appendChild(thead);
+
+    // Body
+    const tbody = document.createElement('tbody');
+    const dates = getDaysInMonth(ym);
+    let firstDay = dates[0].getDay();
+
+    let tr = document.createElement('tr');
+    // Pad start
+    for (let i = 0; i < firstDay; i++) {
+        const td = document.createElement('td');
+        tr.appendChild(td);
+    }
+
+    dates.forEach(d => {
+        if (d.getDay() === 0 && tr.children.length > 0) {
+            tbody.appendChild(tr);
+            tr = document.createElement('tr');
+        }
+
+        const td = document.createElement('td');
+        const dateStr = formatDate(d);
+
+        // Date Label
+        const dateDiv = document.createElement('span');
+        dateDiv.className = 'print-date';
+        dateDiv.textContent = d.getDate();
+        td.appendChild(dateDiv);
+
+        // Target & Note (Calendar)
+        const target = state.dailyTargets && state.dailyTargets[dateStr];
+        const note = state.dailyNotes && state.dailyNotes[dateStr];
+
+        if (target || note) {
+            const infoDiv = document.createElement('div');
+            infoDiv.style.fontSize = '0.6rem';
+            infoDiv.style.marginBottom = '2px';
+            infoDiv.style.color = '#555';
+
+            if (target) {
+                const tSpan = document.createElement('span');
+                tSpan.textContent = `必要: ${target} `;
+                tSpan.style.marginRight = '4px';
+                infoDiv.appendChild(tSpan);
+            }
+            if (note) {
+                const nSpan = document.createElement('span');
+                nSpan.textContent = note;
+                nSpan.style.fontWeight = 'bold';
+                infoDiv.appendChild(nSpan);
+            }
+            td.appendChild(infoDiv);
+        }
+
+        // Shifts Container (Grid)
+        const gridDiv = document.createElement('div');
+        gridDiv.className = 'print-cell-content';
+
+        state.members.forEach(m => {
+            const shift = getShift(dateStr, m.id);
+            if (shift && shift !== 'OFF') {
+                const shiftDiv = document.createElement('div');
+                shiftDiv.className = 'print-shift-item';
+
+                // Abbreviated Shift Names
+                const abbrev = {
+                    'ON_SITE': '出',
+                    'HALF_AM': 'AM',
+                    'HALF_PM': 'PM',
+                    'TRIP': '張',
+                    'OFF': '休'
+                }[shift] || shift;
+
+                // Truncate name to 3 chars for Calendar
+                const shortName = m.name.slice(0, 3);
+                shiftDiv.textContent = `${shortName}:${abbrev}`;
+                gridDiv.appendChild(shiftDiv);
+            }
+        });
+        td.appendChild(gridDiv);
+
+        tr.appendChild(td);
+    });
+
+    // Fill last row padding
+    if (tr.children.length > 0) {
+        while (tr.children.length < 7) {
+            const td = document.createElement('td');
+            tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    printArea.appendChild(table);
+
+    // --- Part 2: Timeline View ---
+    const timelineSection = document.createElement('div');
+    timelineSection.className = 'print-timeline-section';
+    timelineSection.innerHTML = `<h1>${ym} シフト表 (タイムライン)</h1>`;
+    printArea.appendChild(timelineSection);
+
+    const tlTable = document.createElement('table');
+    tlTable.className = 'print-timeline';
+
+    // Header
+    const tlThead = document.createElement('thead');
+    const tlTrHead = document.createElement('tr');
+
+    // Member Name Column
+    const thName = document.createElement('th');
+    thName.className = 'member-col';
+    thName.textContent = '氏名';
+    tlTrHead.appendChild(thName);
+
+    // Date Columns
+    dates.forEach(d => {
+        const th = document.createElement('th');
+        // Show Day Number <br> (Weekday)
+        const dayName = DAYS_JP[d.getDay()];
+        th.innerHTML = `${d.getDate()}<br><span style="font-size:0.55rem">(${dayName})</span>`;
+        th.style.fontSize = '0.6rem';
+        th.style.lineHeight = '1.1';
+
+        // Color for Sat/Sun
+        if (d.getDay() === 0) th.style.color = '#ef4444'; // Red Sun
+        if (d.getDay() === 6) th.style.color = '#3b82f6'; // Blue Sat
+        tlTrHead.appendChild(th);
+    });
+
+    // Summary Header
+    const thSum = document.createElement('th');
+    thSum.className = 'summary-col';
+    thSum.textContent = '出勤';
+    tlTrHead.appendChild(thSum);
+
+    tlThead.appendChild(tlTrHead);
+    tlTable.appendChild(tlThead);
+
+    // Body
+    const tlTbody = document.createElement('tbody');
+
+    // Per-Day Counts for Footer
+    const dailyCounts = new Array(dates.length).fill(0);
+
+    state.members.forEach(m => {
+        const tr = document.createElement('tr');
+
+        // Name Cell
+        const tdName = document.createElement('td');
+        tdName.style.textAlign = 'left';
+        tdName.style.paddingLeft = '4px';
+        // Truncate name to 6 chars for Timeline
+        tdName.textContent = m.name.slice(0, 6);
+        tr.appendChild(tdName);
+
+        let memberWorkCount = 0;
+
+        // Date Cells
+        dates.forEach((d, idx) => {
+            const td = document.createElement('td');
+            td.className = 'shift-cell';
+            const dateStr = formatDate(d);
+            const shift = getShift(dateStr, m.id);
+
+            if (shift && shift !== 'OFF') {
+                // Use icon for compact view
+                td.textContent = SHIFT_ICONS[shift] || shift;
+                memberWorkCount += getShiftDays(shift); // Using existing helper
+                dailyCounts[idx] += getShiftDays(shift);
+            }
+            tr.appendChild(td);
+        });
+
+        // Summary Cell
+        const tdSum = document.createElement('td');
+        tdSum.className = 'summary-col';
+        tdSum.textContent = memberWorkCount;
+        tr.appendChild(tdSum);
+
+        tlTbody.appendChild(tr);
+    });
+
+    // Footer Row (Daily Totals)
+    const trFooter = document.createElement('tr');
+    trFooter.className = 'summary-row';
+
+    const tdFooterLabel = document.createElement('td');
+    tdFooterLabel.textContent = '計';
+    trFooter.appendChild(tdFooterLabel);
+
+    dailyCounts.forEach(count => {
+        const td = document.createElement('td');
+        td.textContent = count > 0 ? count : '';
+        trFooter.appendChild(td);
+    });
+
+    // Grand Total (bottom right) - optional, or empty
+    const tdGrandTotal = document.createElement('td');
+    tdGrandTotal.className = 'summary-col';
+    // Sum of all work days?
+    const totalManDays = dailyCounts.reduce((a, b) => a + b, 0);
+    tdGrandTotal.textContent = totalManDays;
+    trFooter.appendChild(tdGrandTotal);
+
+    tlTbody.appendChild(trFooter);
+
+    // Footer Row (Targets)
+    const trTarget = document.createElement('tr');
+    trTarget.className = 'summary-row';
+    trTarget.style.backgroundColor = '#fffbeb'; // Light yellow for targets
+
+    const tdTargetLabel = document.createElement('td');
+    tdTargetLabel.textContent = '必要';
+    trTarget.appendChild(tdTargetLabel);
+
+    dates.forEach(d => {
+        const dateStr = formatDate(d);
+        const target = state.dailyTargets && state.dailyTargets[dateStr];
+        const td = document.createElement('td');
+        if (target) {
+            td.textContent = target;
+            td.style.color = '#d97706';
+        }
+        trTarget.appendChild(td);
+    });
+
+    // Empty cell under total
+    trTarget.appendChild(document.createElement('td'));
+    tlTbody.appendChild(trTarget);
+
+    tlTable.appendChild(tlTbody);
+    printArea.appendChild(tlTable);
+
+    // --- Remarks (Notes) ---
+    const remarksDiv = document.createElement('div');
+    remarksDiv.style.marginTop = '10px';
+    remarksDiv.style.fontSize = '0.7rem';
+
+    const notesList = [];
+    dates.forEach(d => {
+        const dateStr = formatDate(d);
+        const note = state.dailyNotes && state.dailyNotes[dateStr];
+        if (note) {
+            notesList.push(`・${d.getDate()}日: ${note}`);
+        }
+    });
+
+    if (notesList.length > 0) {
+        remarksDiv.innerHTML = `<strong>【備考・行事】</strong><br>${notesList.join('<br>')}`;
+        printArea.appendChild(remarksDiv);
+    }
 }
 
 // --- Logic: Core ---
@@ -282,7 +566,7 @@ window.deleteCondition = function (idx) {
 window.handleHeaderClick = function (dateStr) {
     // Left Click: Set Headcount Target
     const current = state.dailyTargets && state.dailyTargets[dateStr] || '';
-    const input = prompt(`${dateStr}\n目標出勤人数を入力してください (空欄で解除):`, current);
+    const input = prompt(`${dateStr}\n必要人数を入力してください (空欄で解除):`, current);
     if (input === null) return;
 
     if (!state.dailyTargets) state.dailyTargets = {};
@@ -927,7 +1211,7 @@ function validateSchedule() {
         if (target !== undefined && target !== null && target !== '') {
             const targetNum = parseInt(target);
             if (count !== targetNum) {
-                warnings.push(`📅 ${dateStr}: 目標${targetNum}人 → 実際${count}人`);
+                warnings.push(`📅 ${dateStr}: 必要${targetNum}人 → 実際${count}人`);
             }
         }
     });
@@ -1585,7 +1869,7 @@ function renderCalendar() {
                     <span class="cal-date ${isToday ? 'today' : ''}">
                         ${d.getDate()} <small>(${weekDay})</small>
                     </span>
-                    ${target ? `<span style="font-size:0.7rem; background:#e0f2fe; color:#0369a1; padding:1px 3px; border-radius:3px;">目標${target}</span>` : ''}
+                    ${target ? `<span style="font-size:0.7rem; background:#e0f2fe; color:#0369a1; padding:1px 3px; border-radius:3px;">必要${target}</span>` : ''}
                 </div>
                 ${note ? `<div style="font-size:0.75rem; color:#d97706; font-weight:bold;">${note}</div>` : ''}
             </div>
