@@ -62,6 +62,8 @@ let state = {
 // --- DOM Elements ---
 const els = {
     monthInput: document.getElementById('month-picker'),
+    btnPrevMonth: document.getElementById('btn-prev-month'),
+    btnNextMonth: document.getElementById('btn-next-month'),
     calendarGrid: document.getElementById('calendar-grid'),
     memberList: document.getElementById('member-list'),
     statWorkDays: document.getElementById('stat-workdays'),
@@ -74,6 +76,10 @@ const els = {
     dayFri: document.getElementById('day-fri'),
     daySat: document.getElementById('day-sat'),
     daySun: document.getElementById('day-sun'),
+    // Sidebar Settings
+    settingBaseOff: document.getElementById('setting-base-off'),
+    settingMaxConsecutive: document.getElementById('setting-max-consecutive'),
+
     btnGenerate: document.getElementById('btn-generate'),
     btnReset: document.getElementById('btn-reset'),
     btnPrint: document.getElementById('btn-print'),
@@ -89,6 +95,10 @@ const els = {
 function updateUIInputs() {
     // Set initial input values
     if (els.monthInput) els.monthInput.value = state.settings.yearMonth;
+
+    // Sidebar Settings
+    if (els.settingBaseOff) els.settingBaseOff.value = state.settings.baseOff || 8;
+    if (els.settingMaxConsecutive) els.settingMaxConsecutive.value = state.settings.maxConsecutive || 5;
 
     // Set weekday dropdowns
     const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -111,6 +121,10 @@ function init() {
     // Attach Events
     els.monthInput.addEventListener('change', (e) => updateSetting('yearMonth', e.target.value));
 
+    // Month Navigation
+    if (els.btnPrevMonth) els.btnPrevMonth.addEventListener('click', () => changeMonth(-1));
+    if (els.btnNextMonth) els.btnNextMonth.addEventListener('click', () => changeMonth(1));
+
     // Weekday settings events
     const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
     days.forEach(day => {
@@ -120,6 +134,14 @@ function init() {
         }
     });
 
+    // Sidebar Settings Events
+    if (els.settingBaseOff) {
+        els.settingBaseOff.addEventListener('change', (e) => updateSetting('baseOff', parseInt(e.target.value)));
+    }
+    if (els.settingMaxConsecutive) {
+        els.settingMaxConsecutive.addEventListener('change', (e) => updateSetting('maxConsecutive', parseInt(e.target.value)));
+    }
+
     els.btnGenerate.addEventListener('click', generateSchedule);
     els.btnReset.addEventListener('click', resetSchedule);
     els.btnPrint.addEventListener('click', () => {
@@ -128,7 +150,44 @@ function init() {
     });
     els.btnAddMember.addEventListener('click', addMember);
 
+    // Help Modal
+    initHelpModal();
+
     render();
+}
+
+function initHelpModal() {
+    const modal = document.getElementById('help-modal');
+    const btnHelp = document.getElementById('btn-help');
+    const btnClose = document.getElementById('btn-close-help');
+    const btnCloseMain = document.getElementById('btn-close-help-main');
+
+    if (!modal) return;
+
+    function showHelp() {
+        modal.style.display = 'flex';
+    }
+
+    function hideHelp() {
+        modal.style.display = 'none';
+        localStorage.setItem('shunkin_help_shown_v1', 'true');
+    }
+
+    // Event Listeners
+    if (btnHelp) btnHelp.addEventListener('click', showHelp);
+    if (btnClose) btnClose.addEventListener('click', hideHelp);
+    if (btnCloseMain) btnCloseMain.addEventListener('click', hideHelp);
+
+    // Close on click outside
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) hideHelp();
+    });
+
+    // Auto-show on first visit
+    const shown = localStorage.getItem('shunkin_help_shown_v1');
+    if (!shown) {
+        showHelp();
+    }
 }
 
 // --- Print Logic ---
@@ -598,6 +657,22 @@ window.handleHeaderRightClick = function (e, dateStr) {
     saveState();
     render();
 };
+
+function changeMonth(diff) {
+    const current = state.settings.yearMonth; // YYYY-MM
+    const [y, m] = current.split('-').map(Number);
+    const date = new Date(y, m - 1 + diff, 1); // Month is 0-indexed in Date
+
+    const nextY = date.getFullYear();
+    const nextM = ('0' + (date.getMonth() + 1)).slice(-2);
+    const nextYM = `${nextY}-${nextM}`;
+
+    // Force update the input directly to ensure UI reflects change immediately
+    const input = document.getElementById('month-picker');
+    if (input) input.value = nextYM;
+
+    updateSetting('yearMonth', nextYM);
+}
 
 // --- Logic: Generator (Heuristic) ---
 // --- Last Holiday Logic ---
@@ -1664,6 +1739,7 @@ function render() {
         renderSidebar();
         renderCalendar();
         updateStats();
+        updateUIInputs();
     }
 }
 
@@ -1731,41 +1807,6 @@ function renderSidebar() {
             }
         };
     }
-
-    // --- Settings Section (Base Off) ---
-    const settingsDiv = document.createElement('div');
-    settingsDiv.className = 'sidebar-section';
-    settingsDiv.style.marginTop = '16px';
-    settingsDiv.innerHTML = `
-        <div class="section-header">
-            <h2>設定</h2>
-        </div>
-        <div class="settings-form">
-            <div class="control-group">
-                <label>月間休日数:</label>
-                <input type="number" id="inp-base-off" value="${state.settings.baseOff}" min="0" max="31" style="width: 60px; padding: 4px;">
-            </div>
-            <div class="control-group">
-                <label>連続勤務制限:</label>
-                <input type="number" id="inp-max-consecutive" value="${state.settings.maxConsecutive || 5}" min="2" max="10" style="width: 60px; padding: 4px;">
-            </div>
-        </div>
-        <hr style="border: 0; border-top: 1px solid var(--border); margin: 8px 0;">
-    `;
-    els.memberList.appendChild(settingsDiv);
-
-    // Handler for Base Off & Max Consecutive
-    // Use requestAnimationFrame to ensure DOM is ready
-    requestAnimationFrame(() => {
-        const inpOff = document.getElementById('inp-base-off');
-        if (inpOff) {
-            inpOff.onchange = (e) => updateSetting('baseOff', parseInt(e.target.value) || 0);
-        }
-        const inpCons = document.getElementById('inp-max-consecutive');
-        if (inpCons) {
-            inpCons.onchange = (e) => updateSetting('maxConsecutive', parseInt(e.target.value) || 5);
-        }
-    });
 
     // --- Conditions Section ---
     const conditionsDiv = document.createElement('div');
@@ -2210,10 +2251,7 @@ function updateStats() {
         });
     });
 
-    // Average
-    const avg = activeMemberCount > 0 ? (totalAssigned / activeMemberCount).toFixed(1) : 0;
-
-    els.statTotalSlots.innerHTML = `${totalAssigned} <small>(平均${avg}日)</small>`;
+    els.statTotalSlots.textContent = totalAssigned;
 }
 
 
