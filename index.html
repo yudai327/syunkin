@@ -65,6 +65,7 @@
                             <option value="weak">弱 (速)</option>
                             <option value="medium" selected>中 (標準)</option>
                             <option value="strong">強 (精密)</option>
+                            <option value="strongest">最強 (10倍)</option>
                         </select>
                     </div>
                     <button id="btn-generate" class="btn btn-primary">
@@ -293,6 +294,19 @@
             <div class="modal-footer">
                 <button id="btn-close-help-main" class="btn btn-primary">閉じる</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Progress Modal -->
+    <div id="progress-modal" class="modal-overlay" style="display: none; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div class="modal-content" style="max-width: 300px; text-align: center; padding: 24px;">
+            <h3 style="margin-top: 0; margin-bottom: 16px;">自動生成中...</h3>
+            <div
+                style="background: #e2e8f0; border-radius: 999px; height: 12px; width: 100%; overflow: hidden; margin-bottom: 8px;">
+                <div id="progress-bar"
+                    style="background: var(--primary); width: 0%; height: 100%; transition: width 0.1s;"></div>
+            </div>
+            <p id="progress-text" style="font-size: 0.9rem; color: #64748b; margin: 0;">0%</p>
         </div>
     </div>
 

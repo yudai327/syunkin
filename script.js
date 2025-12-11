@@ -184,7 +184,10 @@ function init() {
         els.settingMaxConsecutive.addEventListener('change', (e) => updateSetting('maxConsecutive', parseInt(e.target.value)));
     }
 
-    els.btnGenerate.addEventListener('click', generateSchedule);
+    els.btnGenerate.addEventListener('click', () => {
+        console.log("Generate button clicked");
+        generateSchedule();
+    });
     els.btnReset.addEventListener('click', resetSchedule);
     els.btnPrint.addEventListener('click', () => {
         preparePrint(viewMode);
@@ -1047,7 +1050,35 @@ function resetSchedule() {
     render();
 }
 
-function generateSchedule(retryCount = 0) {
+async function generateSchedule(retryCount = 0) {
+    // Show Progress UI
+    const progressModal = document.getElementById('progress-modal');
+    console.log('Starting generation...', progressModal);
+
+    // DEBUG: Alert to confirm function is running
+    // alert("Generating...");
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+
+    if (retryCount === 0) {
+        // DEBUG: Confirm entry
+        // alert("Starting Generation (Retry: 0)");
+
+        if (progressModal) {
+            progressModal.style.setProperty('display', 'flex', 'important');
+            console.log("Modal display set to flex");
+        } else {
+            console.error("Progress Modal element not found!");
+            alert("Error: Progress Modal not found");
+        }
+
+        if (progressBar) progressBar.style.width = '0%';
+        if (progressText) progressText.textContent = '0%';
+
+        // Allow UI to render
+        await new Promise(r => setTimeout(r, 50));
+    }
+
     try {
         const dates = getDaysInMonth(state.settings.yearMonth);
         const workDays = dates.filter(isWorkDay);
@@ -1193,9 +1224,19 @@ function generateSchedule(retryCount = 0) {
             workDays.forEach(d => {
                 const dateStr = formatDate(d);
                 let count = 0;
+
+                // Track team counts for daily balance
+                const teamCounts = {};
+                state.teams.forEach(t => teamCounts[t.id] = 0);
+
                 activeMembers.forEach(m => {
                     const s = getShift(dateStr, m.id);
-                    count += getShiftDays(s);
+                    const val = getShiftDays(s);
+                    count += val;
+
+                    if (val > 0 && m.teamId && teamCounts[m.teamId] !== undefined) {
+                        teamCounts[m.teamId] += val;
+                    }
                 });
 
                 // Target Headcount Constraint
@@ -1203,6 +1244,21 @@ function generateSchedule(retryCount = 0) {
                 if (target !== undefined && target !== null && target !== '') {
                     const diff = Math.abs(count - parseInt(target));
                     if (diff > 0) score += diff * 5000;
+
+                    // NEW: Daily Team Balance Penalty
+                    // If target is set, ensure attendance is distributed across teams
+                    let tMin = 9999, tMax = -1;
+                    state.teams.forEach(t => {
+                        const c = teamCounts[t.id];
+                        if (c < tMin) tMin = c;
+                        if (c > tMax) tMax = c;
+                    });
+
+                    // Allow small variance (1) but penalize 2+
+                    if (tMax !== -1 && (tMax - tMin) >= 2) {
+                        const dispersion = tMax - tMin;
+                        score += dispersion * 2000;
+                    }
                 }
 
                 // Variance tracking
@@ -1411,9 +1467,11 @@ function generateSchedule(retryCount = 0) {
         const ITERATIONS = {
             'weak': 3000,      // 弱: 速い、精度は低め
             'medium': 10000,   // 中: バランス (デフォルト)
-            'strong': 30000    // 強: 遅いが高精度
-        }[strength];
+            'strong': 30000,   // 強: 遅いが高精度
+            'strongest': 300000 // 最強: 非常に遅いが最高精度 (10倍)
+        }[strength] || 10000;
 
+        const CHUNK_SIZE = 1000;
         for (let i = 0; i < ITERATIONS; i++) {
             // Pick Member
             const m = state.members[Math.floor(Math.random() * state.members.length)];
@@ -1471,6 +1529,14 @@ function generateSchedule(retryCount = 0) {
                 setShift(dateStr1, m.id, s1);
                 setShift(dateStr2, m.id, s2);
             }
+
+            // Yield control for Progress UI
+            if (i % CHUNK_SIZE === 0) {
+                const percent = Math.round((i / ITERATIONS) * 100);
+                if (progressBar) progressBar.style.width = `${percent}%`;
+                if (progressText) progressText.textContent = `${percent}%`;
+                await new Promise(r => setTimeout(r, 0));
+            }
         }
 
         // Check if we need to retry with different initial shuffle
@@ -1479,9 +1545,10 @@ function generateSchedule(retryCount = 0) {
 
         if (hasVarianceIssue && retryCount < 5) {
             // Show retry notification
-            showToast(`🔄 より良い結果を探しています... (試行 ${retryCount + 1}/5)`, "warning");
-            // Retry with different random seed
-            return generateSchedule(retryCount + 1);
+            if (progressText) progressText.textContent = `リトライ中 (${retryCount + 1}/5)...`;
+            await new Promise(r => setTimeout(r, 500));
+            await generateSchedule(retryCount + 1);
+            return;
         }
 
         // --- Auto-Update Next Month ---
@@ -1489,6 +1556,8 @@ function generateSchedule(retryCount = 0) {
 
         saveState();
         render();
+
+        if (progressModal) progressModal.style.display = 'none';
 
         // Validate and show warnings
         const warnings = validateSchedule();
@@ -1506,6 +1575,7 @@ function generateSchedule(retryCount = 0) {
             showToast(successMsg, "success");
         }
     } catch (e) {
+        if (progressModal) progressModal.style.display = 'none';
         console.error(e);
         showToast("❌ エラーが発生しました: " + e.message, "error");
     }
