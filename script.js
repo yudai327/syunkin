@@ -1254,10 +1254,14 @@ async function generateSchedule(retryCount = 0) {
                         if (c > tMax) tMax = c;
                     });
 
-                    // Allow small variance (1) but penalize 2+
-                    if (tMax !== -1 && (tMax - tMin) >= 2) {
-                        const dispersion = tMax - tMin;
-                        score += dispersion * 2000;
+                    // Allow small variance (1) but penalize 2+ HEAVILY to force balance
+                    if (tMax !== -1) {
+                        const diff = tMax - tMin;
+                        if (diff >= 2) {
+                            score += diff * 50000;
+                        } else if (diff >= 1) {
+                            score += 500; // Small penalty to prefer perfect balance (1,1,1) over (1,1,2) if possible
+                        }
                     }
                 }
 
@@ -2392,16 +2396,34 @@ function renderTimeline() {
     const orphans = activeMembers.filter(m => !m.teamId || !state.teams.find(t => t.id === m.teamId));
     if (orphans.length > 0) groups.push({ team: { id: 'orphan', name: '未所属' }, members: orphans });
 
-    groups.forEach(group => {
+    groups.forEach((group, index) => {
         const teamColor = getTeamColor(group.team.id);
+
+        // Calculate faint background color (same logic as member cell)
+        let headerBgStyle = 'background-color: #f1f5f9;';
+        if (group.team.id !== 'orphan') {
+            const hex = teamColor;
+            if (hex && hex.length === 7) {
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                // Slightly darker than member cell (0.25 vs 0.15) for header distinction
+                headerBgStyle = `background-color: rgba(${r}, ${g}, ${b}, 0.25);`;
+            }
+        }
+
+        // 0. Spacer Row (except first)
+        if (index > 0) {
+            html += `<tr style="height: 20px; border: none; background: #f1f5f9;"><td colspan="${dates.length + 3}" style="border:none;"></td></tr>`;
+        }
 
         // 1. Team Header Row
         html += `
-            <tr class="timeline-team-header" style="background-color: #f1f5f9; font-weight: bold;">
-                <td class="timeline-member-cell" style="border-left: 4px solid ${teamColor}; padding-left: 8px;">
+            <tr class="timeline-team-header" style="font-weight: bold;">
+                <td class="timeline-member-cell" style="border-left: 4px solid ${teamColor}; padding-left: 8px; ${headerBgStyle}">
                     ▼ ${group.team.name}
                 </td>
-                <td colspan="${dates.length + 2}"></td> 
+                <td colspan="${dates.length + 2}" style="${headerBgStyle}"></td> 
             </tr>
         `;
 
@@ -2546,6 +2568,7 @@ function renderTimeline() {
     html += `
                 </tbody>
                 <tfoot>
+                    <tr style="height: 20px; border: none; background: #f1f5f9;"><td colspan="${dates.length + 3}" style="border:none;"></td></tr>
     `;
 
     // --- Footer: Multi-row Stats ---
