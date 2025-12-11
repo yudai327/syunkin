@@ -92,6 +92,30 @@
 
             <!-- Sidebar: Members & Settings -->
             <aside class="sidebar">
+                <!-- Team Section -->
+                <div class="sidebar-section">
+                    <div class="section-header">
+                        <h2>チーム</h2>
+                        <div class="header-actions">
+                            <button id="btn-add-team" class="btn btn-sm btn-outline" title="チーム追加">
+                                <i data-lucide="plus"></i>
+                            </button>
+                            <button id="btn-edit-team" class="btn btn-sm btn-ghost" title="チーム名変更">
+                                <i data-lucide="edit-2"></i>
+                            </button>
+                            <button id="btn-delete-team" class="btn btn-sm btn-ghost text-danger" title="チーム削除">
+                                <i data-lucide="trash-2"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div style="width: 100%; margin-top: 8px;">
+                        <select id="team-select" class="input-full"
+                            style="width: 100%; font-size: 1.3rem; font-weight: bold; height: 56px;">
+                            <option value="ALL">チーム全体</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div class="sidebar-section">
                     <div class="section-header">
                         <h2>メンバー</h2>

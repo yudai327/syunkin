@@ -25,6 +25,17 @@ const SHIFT_LABELS = {
     OFF: '休日'
 };
 
+const TEAM_COLORS = [
+    '#3b82f6', // Blue
+    '#ef4444', // Red
+    '#10b981', // Emerald
+    '#f59e0b', // Amber
+    '#8b5cf6', // Violet
+    '#ec4899', // Pink
+    '#06b6d4', // Cyan
+    '#84cc16'  // Lime
+];
+
 // --- State ---
 let state = {
     settings: {
@@ -39,13 +50,17 @@ let state = {
             sun: 'OFF'
         },
         baseOff: 8, // default days off per month
-        maxConsecutive: 5 // limit consecutive work days
+        maxConsecutive: 5, // limit consecutive work days
+        currentTeamId: 't1' // Default to Team 1
     },
+    teams: [
+        { id: 't1', name: 'チーム1' }
+    ],
     members: [
-        { id: 'm1', name: '佐藤', extraOff: 0 },
-        { id: 'm2', name: '鈴木', extraOff: 0 },
-        { id: 'm3', name: '高橋', extraOff: 0 },
-        { id: 'm4', name: '田中', extraOff: 1 }
+        { id: 'm1', name: '佐藤', extraOff: 0, teamId: 't1' },
+        { id: 'm2', name: '鈴木', extraOff: 0, teamId: 't1' },
+        { id: 'm3', name: '高橋', extraOff: 0, teamId: 't1' },
+        { id: 'm4', name: '田中', extraOff: 1, teamId: 't1' }
     ],
     // Map: "YYYY-MM-DD" -> { memberId: "ON_SITE" | "OFF" | "TRIP" }
     shifts: {},
@@ -87,8 +102,35 @@ const els = {
     btnImport: document.getElementById('btn-import'),
     fileImport: document.getElementById('file-import'),
     btnAddMember: document.getElementById('btn-add-member'),
-    optimizationStrength: document.getElementById('optimization-strength')
+    optimizationStrength: document.getElementById('optimization-strength'),
+
+    // Team Elements
+    teamSelect: document.getElementById('team-select'),
+    btnAddTeam: document.getElementById('btn-add-team'),
+    btnEditTeam: document.getElementById('btn-edit-team'),
+    btnDeleteTeam: document.getElementById('btn-delete-team')
 };
+
+// --- Team Helpers ---
+function getActiveMembers() {
+    const tid = state.settings.currentTeamId;
+    if (!tid || tid === 'ALL') {
+        return state.members;
+    }
+    return state.members.filter(m => m.teamId === tid);
+}
+
+function getTeamName(id) {
+    const t = state.teams.find(x => x.id === id);
+    return t ? t.name : '';
+}
+
+function getTeamColor(teamId) {
+    if (!teamId) return '#cbd5e1';
+    const idx = state.teams.findIndex(t => t.id === teamId);
+    if (idx === -1) return '#cbd5e1';
+    return TEAM_COLORS[idx % TEAM_COLORS.length];
+}
 
 // --- Initialization ---
 // Update input values from state
@@ -145,10 +187,16 @@ function init() {
     els.btnGenerate.addEventListener('click', generateSchedule);
     els.btnReset.addEventListener('click', resetSchedule);
     els.btnPrint.addEventListener('click', () => {
-        preparePrint();
+        preparePrint(viewMode);
         window.print();
     });
     els.btnAddMember.addEventListener('click', addMember);
+
+    // Team Events
+    if (els.teamSelect) els.teamSelect.addEventListener('change', (e) => switchTeam(e.target.value));
+    if (els.btnAddTeam) els.btnAddTeam.addEventListener('click', addTeam);
+    if (els.btnEditTeam) els.btnEditTeam.addEventListener('click', editTeam);
+    if (els.btnDeleteTeam) els.btnDeleteTeam.addEventListener('click', deleteTeam);
 
     // Help Modal
     initHelpModal();
@@ -191,29 +239,220 @@ function initHelpModal() {
 }
 
 // --- Print Logic ---
-function preparePrint() {
+function preparePrint(viewMode = 'calendar') {
     const printArea = document.getElementById('print-area');
     if (!printArea) return;
     printArea.innerHTML = ''; // Clear
 
     const ym = state.settings.yearMonth;
 
-    // 1. Title
+    // Header
     const header = document.createElement('div');
     header.className = 'print-header';
-    header.innerHTML = `<h1>${ym} シフト表</h1>`;
+    header.innerHTML = `<h1>${ym} シフト表 (${viewMode === 'timeline' ? 'タイムライン' : 'カレンダー'})</h1>`;
     printArea.appendChild(header);
 
-    // 2. Table
+    if (viewMode === 'timeline') {
+        renderPrintTimeline(printArea);
+    } else {
+        renderPrintCalendar(printArea);
+    }
+}
+
+function renderPrintTimeline(container) {
+    const dates = getDaysInMonth(state.settings.yearMonth);
+    const table = document.createElement('table');
+    table.className = 'print-timeline';
+
+    // Header Row
+    const thead = document.createElement('thead');
+    const trHead = document.createElement('tr');
+
+    // Member Name Header
+    const thName = document.createElement('th');
+    thName.className = 'member-col';
+    thName.textContent = '氏名';
+    trHead.appendChild(thName);
+
+    // Date Columns
+    // Date Columns
+    dates.forEach(d => {
+        const th = document.createElement('th');
+        const dayName = DAYS_JP[d.getDay()];
+        th.innerHTML = `${d.getDate()}<br>${dayName}`;
+        if (d.getDay() === 0) th.style.color = 'red';
+        else if (d.getDay() === 6) th.style.color = 'blue';
+        trHead.appendChild(th);
+    });
+    // Total Header
+    const thTotal = document.createElement('th');
+    thTotal.textContent = '合計';
+    thTotal.style.width = '40px';
+    trHead.appendChild(thTotal);
+
+    thead.appendChild(trHead);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const activeMembers = getActiveMembers();
+
+    // Grouping
+    const groups = [];
+    state.teams.forEach(t => {
+        const members = activeMembers.filter(m => m.teamId === t.id);
+        if (members.length > 0) groups.push({ team: t, members });
+    });
+    const orphans = activeMembers.filter(m => !m.teamId || !state.teams.find(t => t.id === m.teamId));
+    if (orphans.length > 0) groups.push({ team: { id: 'orphan', name: '未所属' }, members: orphans });
+
+    groups.forEach(group => {
+        // Team Header
+        const trTeam = document.createElement('tr');
+        const tdTeam = document.createElement('td');
+        tdTeam.colSpan = dates.length + 2; // +1 Name, +1 Total
+        tdTeam.style.textAlign = 'left';
+        tdTeam.style.background = '#f1f5f9';
+        tdTeam.style.fontWeight = 'bold';
+        tdTeam.textContent = `▼ ${group.team.name}`;
+        trTeam.appendChild(tdTeam);
+        tbody.appendChild(trTeam);
+
+        // Members
+        group.members.forEach(m => {
+            const tr = document.createElement('tr');
+
+            // Name
+            const tdName = document.createElement('td');
+            tdName.className = 'member-col';
+            tdName.textContent = m.name;
+            tr.appendChild(tdName);
+
+            let memberTotal = 0;
+
+            // Shifts
+            dates.forEach(d => {
+                const dateStr = formatDate(d);
+                const shift = getShift(dateStr, m.id);
+                const td = document.createElement('td');
+                td.className = 'shift-cell';
+
+                if (shift && shift !== 'OFF') {
+                    // Count days
+                    memberTotal += getShiftDays(shift);
+
+                    const icon = SHIFT_ICONS[shift] || '';
+                    td.textContent = icon;
+                    // Background for half days for visibility
+                    if (shift === 'HALF_AM' || shift === 'HALF_PM') {
+                        td.style.backgroundColor = '#fef3c7'; // Light amber
+                    }
+                }
+                tr.appendChild(td);
+            });
+
+            // Member Total Column
+            const tdTotal = document.createElement('td');
+            tdTotal.className = 'shift-cell';
+            tdTotal.style.fontWeight = 'bold';
+            tdTotal.textContent = memberTotal > 0 ? memberTotal : '';
+            tr.appendChild(tdTotal);
+
+            tbody.appendChild(tr);
+        });
+
+        // Team Summary
+        const trSum = document.createElement('tr');
+        trSum.className = 'summary-row';
+        const tdSumLabel = document.createElement('td');
+        tdSumLabel.textContent = '計';
+        tdSumLabel.style.textAlign = 'right';
+        trSum.appendChild(tdSumLabel);
+
+        let groupTotal = 0;
+
+        dates.forEach(d => {
+            const dateStr = formatDate(d);
+            let count = 0;
+            group.members.forEach(m => {
+                const s = getShift(dateStr, m.id);
+                count += getShiftDays(s);
+            });
+            groupTotal += count;
+
+            const tdSum = document.createElement('td');
+            tdSum.textContent = count > 0 ? count : '';
+            trSum.appendChild(tdSum);
+        });
+
+        // Group Total Cell (Final column)
+        const tdGroupTotal = document.createElement('td');
+        tdGroupTotal.style.fontWeight = 'bold';
+        tdGroupTotal.textContent = groupTotal > 0 ? groupTotal : '';
+        trSum.appendChild(tdGroupTotal);
+
+        tbody.appendChild(trSum);
+    });
+
+    // --- Grand Total (All Teams) ---
+    const tfoot = document.createElement('tfoot');
+    const trGrandTotal = document.createElement('tr');
+    trGrandTotal.className = 'summary-row grand-total';
+    trGrandTotal.style.backgroundColor = '#e2e8f0'; // Darker gray for emphasis
+    trGrandTotal.style.borderTop = '2px solid #64748b';
+
+    const tdGrandLabel = document.createElement('td');
+    tdGrandLabel.textContent = '総合計';
+    tdGrandLabel.style.fontWeight = 'bold';
+    tdGrandLabel.style.textAlign = 'right';
+    trGrandTotal.appendChild(tdGrandLabel);
+
+    let grandTotalSum = 0;
+
+    dates.forEach(d => {
+        const dateStr = formatDate(d);
+        let count = 0;
+        activeMembers.forEach(m => {
+            const s = getShift(dateStr, m.id);
+            count += getShiftDays(s);
+        });
+        grandTotalSum += count;
+
+        const tdSum = document.createElement('td');
+        tdSum.style.fontWeight = 'bold';
+        tdSum.style.textAlign = 'center'; // Center align for consistency
+        tdSum.textContent = count > 0 ? count : '';
+        trGrandTotal.appendChild(tdSum);
+    });
+
+    // Final Total Cell
+    const tdFinalTotal = document.createElement('td');
+    tdFinalTotal.style.fontWeight = 'bold';
+    tdFinalTotal.style.textAlign = 'center';
+    tdFinalTotal.textContent = grandTotalSum > 0 ? grandTotalSum : '';
+    trGrandTotal.appendChild(tdFinalTotal);
+
+    tfoot.appendChild(trGrandTotal);
+    table.appendChild(tfoot);
+
+    table.appendChild(tbody);
+    // table.appendChild(tfoot); // tfoot usually goes before body in HTML4, but after is fine in HTML5. Let's append it to table. 
+    // Actually table.appendChild(tbody) was already called. I should append tfoot after tbody.
+    table.appendChild(tfoot);
+    container.appendChild(table);
+}
+
+function renderPrintCalendar(container) {
     const table = document.createElement('table');
     table.className = 'print-calendar';
 
     // Header Row
     const thead = document.createElement('thead');
     const trHead = document.createElement('tr');
-    DAYS_JP.forEach(d => {
+    ['月', '火', '水', '木', '金', '土', '日'].forEach((d, i) => {
         const th = document.createElement('th');
         th.textContent = d;
+        if (i === 5) th.style.color = 'blue';
+        if (i === 6) th.style.color = 'red'; // Sunday/Holiday color
         trHead.appendChild(th);
     });
     thead.appendChild(trHead);
@@ -221,255 +460,131 @@ function preparePrint() {
 
     // Body
     const tbody = document.createElement('tbody');
-    const dates = getDaysInMonth(ym);
+    const dates = getDaysInMonth(state.settings.yearMonth);
+
+    // Calendar Layout Logic
     let firstDay = dates[0].getDay();
+    firstDay = (firstDay === 0) ? 6 : firstDay - 1;
 
     let tr = document.createElement('tr');
-    // Pad start
+    // Empty cells
     for (let i = 0; i < firstDay; i++) {
-        const td = document.createElement('td');
-        tr.appendChild(td);
+        tr.appendChild(document.createElement('td'));
     }
 
-    dates.forEach(d => {
-        if (d.getDay() === 0 && tr.children.length > 0) {
+    // Helper for grouping shifts by Team
+    const getTeamIndex = (tid) => state.teams.findIndex(t => t.id === tid);
+    const activeMembers = getActiveMembers();
+    // Sort members by Team
+    activeMembers.sort((a, b) => getTeamIndex(a.teamId) - getTeamIndex(b.teamId));
+
+    dates.forEach((d, idx) => {
+        if (tr.children.length === 7) {
             tbody.appendChild(tr);
             tr = document.createElement('tr');
         }
 
-        const td = document.createElement('td');
         const dateStr = formatDate(d);
+        const td = document.createElement('td');
 
-        // Date Label
-        const dateDiv = document.createElement('span');
+        // Date Number
+        const dateDiv = document.createElement('div');
         dateDiv.className = 'print-date';
         dateDiv.textContent = d.getDate();
+        if (d.getDay() === 0) dateDiv.style.color = 'red';
+        if (d.getDay() === 6) dateDiv.style.color = 'blue';
         td.appendChild(dateDiv);
 
-        // Target & Note (Calendar)
-        const target = state.dailyTargets && state.dailyTargets[dateStr];
-        const note = state.dailyNotes && state.dailyNotes[dateStr];
+        // Shifts Content
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'print-cell-content';
 
-        if (target || note) {
-            const infoDiv = document.createElement('div');
-            infoDiv.style.fontSize = '0.6rem';
-            infoDiv.style.marginBottom = '2px';
-            infoDiv.style.color = '#555';
-
-            if (target) {
-                const tSpan = document.createElement('span');
-                tSpan.textContent = `必要: ${target} `;
-                tSpan.style.marginRight = '4px';
-                infoDiv.appendChild(tSpan);
-            }
-            if (note) {
-                const nSpan = document.createElement('span');
-                nSpan.textContent = note;
-                nSpan.style.fontWeight = 'bold';
-                infoDiv.appendChild(nSpan);
-            }
-            td.appendChild(infoDiv);
-        }
-
-        // Shifts Container (Grid)
-        const gridDiv = document.createElement('div');
-        gridDiv.className = 'print-cell-content';
-
-        state.members.forEach(m => {
+        // List members working on this day
+        activeMembers.forEach(m => {
             const shift = getShift(dateStr, m.id);
-            if (shift && shift !== 'OFF') {
-                const shiftDiv = document.createElement('div');
-                shiftDiv.className = 'print-shift-item';
+            if (!shift || shift === 'OFF') return;
 
-                // Abbreviated Shift Names
-                const abbrev = {
-                    'ON_SITE': '出',
-                    'HALF_AM': 'AM',
-                    'HALF_PM': 'PM',
-                    'TRIP': '張',
-                    'OFF': '休'
-                }[shift] || shift;
+            const item = document.createElement('div');
+            item.className = 'print-shift-item';
 
-                // Truncate name to 3 chars for Calendar
-                const shortName = m.name.slice(0, 3);
-                shiftDiv.textContent = `${shortName}:${abbrev}`;
-                gridDiv.appendChild(shiftDiv);
+            // Team indicator
+            const teamColor = getTeamColor(m.teamId);
+            item.style.borderLeft = `4px solid ${teamColor}`;
+            item.style.paddingLeft = '4px';
+
+            item.textContent = m.name.substring(0, 3);
+
+            // Add symbol if special shift
+            if (shift !== 'ON_SITE') {
+                const icon = SHIFT_ICONS[shift];
+                if (icon) item.textContent += icon;
             }
-        });
-        td.appendChild(gridDiv);
 
+            contentDiv.appendChild(item);
+        });
+
+        td.appendChild(contentDiv);
         tr.appendChild(td);
     });
 
-    // Fill last row padding
-    if (tr.children.length > 0) {
-        while (tr.children.length < 7) {
-            const td = document.createElement('td');
-            tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
+    // Fill last row
+    while (tr.children.length < 7) {
+        tr.appendChild(document.createElement('td'));
     }
-
+    tbody.appendChild(tr);
     table.appendChild(tbody);
-    printArea.appendChild(table);
+    container.appendChild(table);
 
-    // --- Part 2: Timeline View ---
-    const timelineSection = document.createElement('div');
-    timelineSection.className = 'print-timeline-section';
-    timelineSection.innerHTML = `<h1>${ym} シフト表 (タイムライン)</h1>`;
-    printArea.appendChild(timelineSection);
+    // --- Team Legend ---
+    const legendDiv = document.createElement('div');
+    legendDiv.className = 'print-legend';
+    legendDiv.style.marginTop = '15px';
+    legendDiv.style.fontSize = '0.8rem';
+    legendDiv.style.display = 'flex';
+    legendDiv.style.flexWrap = 'wrap';
+    legendDiv.style.gap = '15px';
 
-    const tlTable = document.createElement('table');
-    tlTable.className = 'print-timeline';
+    state.teams.forEach(t => {
+        const teamSet = document.createElement('div');
+        teamSet.style.display = 'flex';
+        teamSet.style.alignItems = 'center';
+        teamSet.style.border = '1px solid #ddd';
+        teamSet.style.padding = '4px 8px';
+        teamSet.style.borderRadius = '4px';
 
-    // Header
-    const tlThead = document.createElement('thead');
-    const tlTrHead = document.createElement('tr');
+        const colorBox = document.createElement('div');
+        colorBox.style.width = '12px';
+        colorBox.style.height = '12px';
+        colorBox.style.backgroundColor = getTeamColor(t.id);
+        colorBox.style.marginRight = '6px';
+        colorBox.style.border = '1px solid #999';
 
-    // Member Name Column
-    const thName = document.createElement('th');
-    thName.className = 'member-col';
-    thName.textContent = '氏名';
-    tlTrHead.appendChild(thName);
+        const teamName = document.createElement('span');
+        teamName.style.fontWeight = 'bold';
+        teamName.style.marginRight = '8px';
+        teamName.textContent = t.name;
 
-    // Date Columns
-    dates.forEach(d => {
-        const th = document.createElement('th');
-        // Show Day Number <br> (Weekday)
-        const dayName = DAYS_JP[d.getDay()];
-        th.innerHTML = `${d.getDate()}<br><span style="font-size:0.55rem">(${dayName})</span>`;
-        th.style.fontSize = '0.6rem';
-        th.style.lineHeight = '1.1';
+        // Members in this team
+        const members = getActiveMembers().filter(m => m.teamId === t.id).map(m => m.name);
+        const memberList = document.createElement('span');
+        memberList.style.color = '#555';
+        memberList.textContent = `(${members.join(', ')})`;
 
-        // Color for Sat/Sun
-        if (d.getDay() === 0) th.style.color = '#ef4444'; // Red Sun
-        if (d.getDay() === 6) th.style.color = '#3b82f6'; // Blue Sat
-        tlTrHead.appendChild(th);
+        teamSet.appendChild(colorBox);
+        teamSet.appendChild(teamName);
+        teamSet.appendChild(memberList);
+        legendDiv.appendChild(teamSet);
     });
 
-    // Summary Header
-    const thSum = document.createElement('th');
-    thSum.className = 'summary-col';
-    thSum.textContent = '出勤';
-    tlTrHead.appendChild(thSum);
-
-    tlThead.appendChild(tlTrHead);
-    tlTable.appendChild(tlThead);
-
-    // Body
-    const tlTbody = document.createElement('tbody');
-
-    // Per-Day Counts for Footer
-    const dailyCounts = new Array(dates.length).fill(0);
-
-    state.members.forEach(m => {
-        const tr = document.createElement('tr');
-
-        // Name Cell
-        const tdName = document.createElement('td');
-        tdName.style.textAlign = 'left';
-        tdName.style.paddingLeft = '4px';
-        // Truncate name to 6 chars for Timeline
-        tdName.textContent = m.name.slice(0, 6);
-        tr.appendChild(tdName);
-
-        let memberWorkCount = 0;
-
-        // Date Cells
-        dates.forEach((d, idx) => {
-            const td = document.createElement('td');
-            td.className = 'shift-cell';
-            const dateStr = formatDate(d);
-            const shift = getShift(dateStr, m.id);
-
-            if (shift && shift !== 'OFF') {
-                // Use icon for compact view
-                td.textContent = SHIFT_ICONS[shift] || shift;
-                memberWorkCount += getShiftDays(shift); // Using existing helper
-                dailyCounts[idx] += getShiftDays(shift);
-            }
-            tr.appendChild(td);
-        });
-
-        // Summary Cell
-        const tdSum = document.createElement('td');
-        tdSum.className = 'summary-col';
-        tdSum.textContent = memberWorkCount;
-        tr.appendChild(tdSum);
-
-        tlTbody.appendChild(tr);
-    });
-
-    // Footer Row (Daily Totals)
-    const trFooter = document.createElement('tr');
-    trFooter.className = 'summary-row';
-
-    const tdFooterLabel = document.createElement('td');
-    tdFooterLabel.textContent = '計';
-    trFooter.appendChild(tdFooterLabel);
-
-    dailyCounts.forEach(count => {
-        const td = document.createElement('td');
-        td.textContent = count > 0 ? count : '';
-        trFooter.appendChild(td);
-    });
-
-    // Grand Total (bottom right) - optional, or empty
-    const tdGrandTotal = document.createElement('td');
-    tdGrandTotal.className = 'summary-col';
-    // Sum of all work days?
-    const totalManDays = dailyCounts.reduce((a, b) => a + b, 0);
-    tdGrandTotal.textContent = totalManDays;
-    trFooter.appendChild(tdGrandTotal);
-
-    tlTbody.appendChild(trFooter);
-
-    // Footer Row (Targets)
-    const trTarget = document.createElement('tr');
-    trTarget.className = 'summary-row';
-    trTarget.style.backgroundColor = '#fffbeb'; // Light yellow for targets
-
-    const tdTargetLabel = document.createElement('td');
-    tdTargetLabel.textContent = '必要';
-    trTarget.appendChild(tdTargetLabel);
-
-    dates.forEach(d => {
-        const dateStr = formatDate(d);
-        const target = state.dailyTargets && state.dailyTargets[dateStr];
-        const td = document.createElement('td');
-        if (target) {
-            td.textContent = target;
-            td.style.color = '#d97706';
-        }
-        trTarget.appendChild(td);
-    });
-
-    // Empty cell under total
-    trTarget.appendChild(document.createElement('td'));
-    tlTbody.appendChild(trTarget);
-
-    tlTable.appendChild(tlTbody);
-    printArea.appendChild(tlTable);
-
-    // --- Remarks (Notes) ---
-    const remarksDiv = document.createElement('div');
-    remarksDiv.style.marginTop = '10px';
-    remarksDiv.style.fontSize = '0.7rem';
-
-    const notesList = [];
-    dates.forEach(d => {
-        const dateStr = formatDate(d);
-        const note = state.dailyNotes && state.dailyNotes[dateStr];
-        if (note) {
-            notesList.push(`・${d.getDate()}日: ${note}`);
-        }
-    });
-
-    if (notesList.length > 0) {
-        remarksDiv.innerHTML = `<strong>【備考・行事】</strong><br>${notesList.join('<br>')}`;
-        printArea.appendChild(remarksDiv);
-    }
+    container.appendChild(legendDiv);
 }
+
+// Hook up events
+
+
+
+
+
 
 // --- Logic: Core ---
 
@@ -574,23 +689,42 @@ function isFixed(dateStr, memberId) {
     return state.fixed[dateStr] && state.fixed[dateStr][memberId];
 }
 
-function updateSetting(key, value) {
-    state.settings[key] = value;
-    saveState();
-    render();
+// --- Logic: Settings ---
+function updateSetting(key, val) {
+    if (key === 'baseOff' || key === 'maxConsecutive' || key === 'yearMonth' || key === 'optimizationStrength') {
+        state.settings[key] = val; // Always write to global
+        saveState();
+        render(); // Full re-render to update calendar/timeline
+    }
 }
 
-function updateWorkDay(dayKey, value) {
-    state.settings.workDays[dayKey] = value;
+function updateWorkDay(day, val) {
+    if (!state.settings.workDays) state.settings.workDays = {};
+    state.settings.workDays[day] = val; // Always write to global
     saveState();
-    render();
+    renderSidebar();
+}
+
+function getTeamName(teamId) {
+    if (teamId === 'ALL') return '全員 (全体)';
+    const t = state.teams.find(x => x.id === teamId);
+    return t ? t.name : 'Unknown Team';
+}
+
+function getActiveMembers() {
+    const current = state.settings.currentTeamId;
+    if (!current || current === 'ALL') {
+        return state.members;
+    }
+    return state.members.filter(m => m.teamId === current);
 }
 
 function addMember() {
     const name = prompt("メンバー名を入力してください:", "New Member");
     if (!name) return;
     const id = 'm' + Date.now();
-    state.members.push({ id, name, extraOff: 0 });
+    const teamId = (state.settings.currentTeamId && state.settings.currentTeamId !== 'ALL') ? state.settings.currentTeamId : undefined;
+    state.members.push({ id, name, extraOff: 0, teamId });
     saveState();
     renderSidebar();
 }
@@ -602,7 +736,85 @@ function deleteMember(id) {
     render();
     saveState();
 }
+
 window.deleteMember = deleteMember;
+
+// --- Team Management ---
+function renderTeams() {
+    if (!els.teamSelect) return;
+
+    const current = state.settings.currentTeamId || 'ALL';
+    els.teamSelect.innerHTML = '<option value="ALL">チーム全体</option>';
+
+    state.teams.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        if (t.id === current) opt.selected = true;
+        els.teamSelect.appendChild(opt);
+    });
+
+    // Update buttons state
+    if (els.btnEditTeam) els.btnEditTeam.disabled = (current === 'ALL');
+    if (els.btnDeleteTeam) els.btnDeleteTeam.disabled = (current === 'ALL');
+}
+
+function switchTeam(teamId) {
+    state.settings.currentTeamId = teamId;
+    saveState();
+    render();
+}
+
+function addTeam() {
+    const name = prompt("新しいチーム名を入力してください:");
+    if (!name) return;
+
+    // Generate ID
+    const id = 't' + Date.now();
+    state.teams.push({ id, name });
+
+    // Switch to new team
+    state.settings.currentTeamId = id;
+
+    saveState();
+    render();
+}
+
+function editTeam() {
+    const tid = state.settings.currentTeamId;
+    if (!tid || tid === 'ALL') return;
+
+    const team = state.teams.find(t => t.id === tid);
+    if (!team) return;
+
+    const newName = prompt("チーム名を編集:", team.name);
+    if (newName && newName !== team.name) {
+        team.name = newName;
+        saveState();
+        render();
+    }
+}
+
+function deleteTeam() {
+    const tid = state.settings.currentTeamId;
+    if (!tid || tid === 'ALL') return;
+
+    if (!confirm("チームを削除しますか？\n所属メンバーは「チームなし」になります。")) return;
+
+    // Remove team
+    state.teams = state.teams.filter(t => t.id !== tid);
+
+    // Unassign members
+    state.members.forEach(m => {
+        if (m.teamId === tid) {
+            delete m.teamId; // or set to undefined
+        }
+    });
+
+    state.settings.currentTeamId = 'ALL';
+    saveState();
+    render();
+}
 
 window.addCondition = function () {
     state.conditions.push({ type: 'TOGETHER', m1: '', m2: '' });
@@ -896,8 +1108,10 @@ function generateSchedule(retryCount = 0) {
         // Update state reference to this working copy
         state.shifts = newShifts;
 
+        const activeMembers = getActiveMembers();
+
         // 2. Initial Random Fill (Satisfy Quotas)
-        state.members.forEach(m => {
+        activeMembers.forEach(m => {
             // A. Set Non-Work Days to OFF (unless fixed to something else)
             dates.forEach(d => {
                 const dateStr = formatDate(d);
@@ -906,9 +1120,8 @@ function generateSchedule(retryCount = 0) {
                 }
             });
 
-            // B. Calculate Remaining OFFs needed (Total Days - BaseOff - ExtraOff) -> Work Days
-            // Actually simplest is: Target Work Days = Total DaysInMonth - (BaseOff + ExtraOff).
-            // If Target < 0, 0.
+            // B. Calculate Target Work Days
+            // Target = TotalDays - BaseOff - TeamBaseOff
             const totalDays = dates.length;
             const targetWork = Math.max(0, totalDays - state.settings.baseOff - (m.extraOff || 0));
 
@@ -921,14 +1134,13 @@ function generateSchedule(retryCount = 0) {
                 // Only consider WorkDays for assignment pool
                 if (isWorkDay(d)) {
                     const s = getShift(dateStr, m.id);
-                    if (s === 'ON_SITE' || s === 'TRIP') {
+                    if (s === 'ON_SITE' || s === 'TRIP' || s === 'HALF_AM' || s === 'HALF_PM') {
                         currentWork++;
                     } else if (!s) {
                         availableWorkDays.push(dateStr);
                     }
-                    // If Fixed OFF, it ignores.
                 } else {
-                    // Non-work day. Check if Fixed Work (rare but possible)
+                    // Non-work day. Check if Fixed Work
                     const s = getShift(dateStr, m.id);
                     if (s === 'ON_SITE' || s === 'TRIP') currentWork++;
                 }
@@ -936,8 +1148,7 @@ function generateSchedule(retryCount = 0) {
 
             const neededWork = targetWork - currentWork;
 
-            // Treat all available work days equally for initial assignment
-            // Use Fisher-Yates shuffle for true uniform randomness
+            // Shuffle available
             const sortedAvailable = [...availableWorkDays];
             for (let i = sortedAvailable.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
@@ -968,7 +1179,7 @@ function generateSchedule(retryCount = 0) {
 
         // Pre-calculate Last Holidays to avoid repeated calls in loop
         const cachedLastHolidays = {};
-        state.members.forEach(m => {
+        activeMembers.forEach(m => {
             cachedLastHolidays[m.id] = getLastHoliday(m.id);
         });
 
@@ -976,15 +1187,13 @@ function generateSchedule(retryCount = 0) {
             let score = 0;
 
             // A. Daily Variance & Targets
-            // Target: Flat distribution across WorkDays (Diff < 2)
-            // AND specific daily targets
             let minCount = 9999;
             let maxCount = -1;
 
             workDays.forEach(d => {
                 const dateStr = formatDate(d);
                 let count = 0;
-                state.members.forEach(m => {
+                activeMembers.forEach(m => {
                     const s = getShift(dateStr, m.id);
                     count += getShiftDays(s);
                 });
@@ -993,18 +1202,16 @@ function generateSchedule(retryCount = 0) {
                 const target = state.dailyTargets && state.dailyTargets[dateStr];
                 if (target !== undefined && target !== null && target !== '') {
                     const diff = Math.abs(count - parseInt(target));
-                    if (diff > 0) score += diff * 5000; // Major penalty for missing target
+                    if (diff > 0) score += diff * 5000;
                 }
 
                 // Variance tracking
-                // MODIFIED: Exclude HALF_AM/PM/OFF from variance calculation to match validation logic
-                // We typically only want to flatten "Full Work" days.
+                // Stick to Global Settings for Variance Logic (check global work days)
                 const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
                 const dayKey = dayNames[d.getDay()];
                 const setting = state.settings.workDays[dayKey];
 
                 if (setting !== 'HALF_AM' && setting !== 'HALF_PM' && setting !== 'OFF') {
-                    // Start of Variance Input
                     const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
                     if (!hasTarget) {
                         if (count < minCount) minCount = count;
@@ -1012,45 +1219,63 @@ function generateSchedule(retryCount = 0) {
                     }
                 }
 
-                score += (count * count) * 10; // Smoothing weight
+                // Smoothing
+                score += (count * count) * 10;
             });
 
-            // Strict Variance Penalty (Max - Min must be < 2, i.e. 0 or 1)
-            // INCREASED penalty per user request to force flatness
+            // Strict Variance Penalty (Global)
             if (maxCount !== -1 && (maxCount - minCount) >= 2) {
                 const diff = maxCount - minCount;
-                score += diff * 10000; // Aggressive scaled penalty (e.g. diff 2 -> +20000, diff 3 -> +30000)
+                score += diff * 10000;
             }
 
-            // B. Consecutive Shifts (Penalty for > N)
+            // NEW: Strict Variance Penalty (Per Team)
+            // Ensure each team is also flat locally to prevent "Team A works, Team B rests" imbalance.
+            state.teams.forEach(t => {
+                const teamMembers = activeMembers.filter(m => m.teamId === t.id);
+                if (teamMembers.length === 0) return;
+
+                let tMin = 9999, tMax = -1;
+                workDays.forEach(d => {
+                    const dateStr = formatDate(d);
+                    // Skip check for Half/Off/Target days (using GLOBAL settings)
+                    const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                    const setting = state.settings.workDays[dayNames[d.getDay()]];
+                    const hasTarget = state.dailyTargets && state.dailyTargets[dateStr];
+
+                    if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF' || hasTarget) return;
+
+                    let c = 0;
+                    teamMembers.forEach(m => c += getShiftDays(getShift(dateStr, m.id)));
+                    if (c < tMin) tMin = c;
+                    if (c > tMax) tMax = c;
+                });
+
+                if (tMax !== -1 && (tMax - tMin) >= 2) {
+                    const diff = tMax - tMin;
+                    score += diff * 8000; // Strong penalty for team imbalance, slightly less than global
+                }
+            });
+
+            // B. Consecutive Shifts (Penalty for > N) -> Per Team
             const limit = state.settings.maxConsecutive || 5;
-            state.members.forEach(m => {
+            activeMembers.forEach(m => {
                 let consecutive = 0;
 
-                // Initialize consecutive based on last holiday
+                // Initialize from last holiday
                 const lh = cachedLastHolidays[m.id];
                 if (lh) {
                     const startOfMonth = dates[0];
                     const lhDate = new Date(lh);
-                    // Time difference in days
-                    const diffTime = startOfMonth - lhDate;
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    // e.g. LH=Nov30, Start=Dec1 -> diff=1 -> cons=0
-                    // e.g. LH=Nov29, Start=Dec1 -> diff=2 -> cons=1 (worked Nov30)
-                    if (diffDays > 1) {
-                        consecutive = diffDays - 1;
-                    }
+                    const diffDays = Math.ceil((startOfMonth - lhDate) / (1000 * 60 * 60 * 24));
+                    if (diffDays > 1) consecutive = diffDays - 1;
                 }
 
                 dates.forEach(d => {
                     const s = getShift(formatDate(d), m.id);
-                    if (getShiftDays(s) > 0) { // Any work (full or half day)
+                    if (getShiftDays(s) > 0) {
                         consecutive++;
-                        if (consecutive > limit) score += 1000; // Hard Penalty for exceeding limit
-
-                        // Soft Penalty: Prefer shorter streaks even if within limit
-                        // e.g. 5 days = 25, 2 days = 4. 2+3=13 vs 5=25.
-                        // Weighting needs to be high enough to matter but low enough not to override quotas
+                        if (consecutive > limit) score += 1000;
                         score += Math.pow(consecutive, 2) * 10;
                     } else {
                         consecutive = 0;
@@ -1065,8 +1290,8 @@ function generateSchedule(retryCount = 0) {
                     const dateStr = formatDate(d);
                     const s1 = getShift(dateStr, c.m1);
                     const s2 = getShift(dateStr, c.m2);
-                    const w1 = (s1 === 'ON_SITE' || s1 === 'TRIP');
-                    const w2 = (s2 === 'ON_SITE' || s2 === 'TRIP');
+                    const w1 = (getShiftDays(s1) > 0);
+                    const w2 = (getShiftDays(s2) > 0);
 
                     if (c.type === 'TOGETHER') {
                         if (w1 !== w2) score += 200;
@@ -1081,84 +1306,105 @@ function generateSchedule(retryCount = 0) {
 
         let currentScore = calculateScore();
 
-        // 2-B. Directed Flattening (Deterministic)
-        // Before random optimization, try to forcibly flatten the daily counts to Max-Min <= 1
-        // by moving one person from MaxDay to MinDay.
-        for (let k = 0; k < state.members.length * 3; k++) {
-            // 1. Calculate current counts
-            const dailyCounts = {};
-            let minC = 9999, maxC = -1;
-            let minDates = [], maxDates = [];
+        // 2-B. Directed Flattening (Determinstic) - Enhanced
+        // Function to perform flattening on a specific subset of members
+        const performFlattening = (targetMembers, attemptLimit) => {
+            for (let k = 0; k < attemptLimit; k++) {
+                // 1. Calculate current counts
+                const dailyCounts = {};
+                let minC = 9999, maxC = -1;
+                let minDates = [], maxDates = [];
 
-            workDays.forEach(d => {
-                const dateStr = formatDate(d);
-                // SKIP half-day settings and TARGET days from variance calculation
-                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-                const setting = state.settings.workDays[dayNames[d.getDay()]];
-
-                const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
-                if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF' || hasTarget) return;
-
-                let c = 0;
-                state.members.forEach(m => c += getShiftDays(getShift(dateStr, m.id)));
-                dailyCounts[dateStr] = c;
-
-                if (c < minC) minC = c;
-                if (c > maxC) maxC = c;
-            });
-
-            Object.entries(dailyCounts).forEach(([ds, c]) => {
-                if (c === minC) minDates.push(ds);
-                if (c === maxC) maxDates.push(ds);
-            });
-
-            // If already flat enough, stop
-            if (maxC - minC < 2) break;
-
-            // 2. Try to move a shift from MaxDay -> MinDay
-            let moved = false;
-            // Try random pair of max/min dates to avoid stuck loops
-            const maxD = maxDates[Math.floor(Math.random() * maxDates.length)];
-            const minD = minDates[Math.floor(Math.random() * minDates.length)];
-
-            // Identify a member who is Working on MaxD AND NOT Working on MinD
-            // AND not fixed on either.
-            const candidates = state.members.filter(m => {
-                if (isFixed(maxD, m.id) || isFixed(minD, m.id)) return false;
-                const sMax = getShift(maxD, m.id);
-                const sMin = getShift(minD, m.id);
-                // Working on Max (ON_SITE/TRIP) and OFF on Min
-                return (getShiftDays(sMax) >= 1 && getShiftDays(sMin) === 0 && sMin === 'OFF');
-            });
-
-            if (candidates.length > 0) {
-                // Pick one
-                const m = candidates[Math.floor(Math.random() * candidates.length)];
-                const sMax = getShift(maxD, m.id); // e.g. ON_SITE
-
-                // Move: MaxD -> OFF, MinD -> sMax (preserving type usually ON_SITE)
-                // But check MinD weekday setting
-                const getWorkType = (dString) => {
-                    const d = new Date(dString);
+                workDays.forEach(d => {
+                    const dateStr = formatDate(d);
                     const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
                     const setting = state.settings.workDays[dayNames[d.getDay()]];
-                    if (setting === 'HALF_AM') return 'HALF_AM';
-                    if (setting === 'HALF_PM') return 'HALF_PM';
-                    return 'ON_SITE';
-                };
 
-                const newSMin = getWorkType(minD);
+                    const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
+                    if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF' || hasTarget) return;
 
-                setShift(maxD, m.id, 'OFF');
-                setShift(minD, m.id, newSMin);
-                moved = true;
+                    let c = 0;
+                    targetMembers.forEach(m => c += getShiftDays(getShift(dateStr, m.id)));
+                    dailyCounts[dateStr] = c;
 
-                // Update score for next iteration
-                currentScore = calculateScore();
+                    if (c < minC) minC = c;
+                    if (c > maxC) maxC = c;
+                });
+
+                // If flat enough, stop
+                if (maxC !== -1 && (maxC - minC) < 2) break;
+
+                Object.entries(dailyCounts).forEach(([ds, c]) => {
+                    if (c === minC) minDates.push(ds);
+                    if (c === maxC) maxDates.push(ds);
+                });
+
+                // 2. Try to move a shift from ANY MaxDay -> ANY MinDay
+                let moved = false;
+
+                // Randomize order of max/min dates to avoid stuck loops
+                minDates.sort(() => Math.random() - 0.5);
+                maxDates.sort(() => Math.random() - 0.5);
+
+                outerLoop:
+                for (const maxD of maxDates) {
+                    for (const minD of minDates) {
+                        if (maxD === minD) continue;
+
+                        // Identify ALL candidates who are Working on MaxD AND NOT Working on MinD
+                        const candidates = targetMembers.filter(m => {
+                            if (isFixed(maxD, m.id) || isFixed(minD, m.id)) return false;
+                            const sMax = getShift(maxD, m.id);
+                            const sMin = getShift(minD, m.id);
+                            // Working on Max (ON_SITE/TRIP) and OFF on Min
+                            return (getShiftDays(sMax) >= 1 && getShiftDays(sMin) === 0 && sMin === 'OFF');
+                        });
+
+                        if (candidates.length > 0) {
+                            // Pick one
+                            const m = candidates[Math.floor(Math.random() * candidates.length)];
+                            const sMax = getShift(maxD, m.id); // e.g. ON_SITE
+
+                            // Move: MaxD -> OFF, MinD -> sMax (preserving type usually ON_SITE)
+                            // But check MinD weekday setting
+                            const getWorkType = (dString) => {
+                                const d = new Date(dString);
+                                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                                const setting = state.settings.workDays[dayNames[d.getDay()]];
+                                if (setting === 'HALF_AM') return 'HALF_AM';
+                                if (setting === 'HALF_PM') return 'HALF_PM';
+                                return 'ON_SITE';
+                            };
+
+                            const newSMin = getWorkType(minD);
+
+                            setShift(maxD, m.id, 'OFF');
+                            setShift(minD, m.id, newSMin);
+
+                            moved = true;
+                            // Update score? Not strictly needed inside this helper as it's deterministic heuristics
+                            // But usually good to keep state consistent if score is used elsewhere
+                            break outerLoop;
+                        }
+                    }
+                }
+                if (!moved) break;
             }
+        };
 
-            if (!moved) break; // Could not find any valid move to improve
-        }
+        // Phase 1: Flatten Per Team (Prevent "Team A works, Team B rests" imbalance)
+        state.teams.forEach(t => {
+            const teamMembers = activeMembers.filter(m => m.teamId === t.id);
+            if (teamMembers.length > 0) {
+                performFlattening(teamMembers, 200);
+            }
+        });
+
+        // Phase 2: Flatten Global (Smooth out remaining bumps)
+        performFlattening(activeMembers, 500);
+
+        // Recalculate score after flattening
+        currentScore = calculateScore();
 
         // Get optimization strength from UI
         const strength = els.optimizationStrength ? els.optimizationStrength.value : 'medium';
@@ -1171,11 +1417,20 @@ function generateSchedule(retryCount = 0) {
         for (let i = 0; i < ITERATIONS; i++) {
             // Pick Member
             const m = state.members[Math.floor(Math.random() * state.members.length)];
+            const mWorkDays = state.settings.workDays; // Use global settings
 
-            // Pick 2 Work Days to swap
-            // (Swapping preserves total work count, so Quota is invariant)
-            const d1 = workDays[Math.floor(Math.random() * workDays.length)];
-            const d2 = workDays[Math.floor(Math.random() * workDays.length)];
+            // Pick 2 Assignable Days to swap
+            // Use local helper or simple filter
+            const assignableDates = dates.filter(d => {
+                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                const setting = mWorkDays[dayNames[d.getDay()]];
+                return setting !== 'OFF';
+            });
+
+            if (assignableDates.length < 2) continue;
+
+            const d1 = assignableDates[Math.floor(Math.random() * assignableDates.length)];
+            const d2 = assignableDates[Math.floor(Math.random() * assignableDates.length)];
 
             const dateStr1 = formatDate(d1);
             const dateStr2 = formatDate(d2);
@@ -1188,22 +1443,20 @@ function generateSchedule(retryCount = 0) {
 
             if (s1 === s2) continue; // No functional change
 
-            // Try Swap
-            // When moving "Work" to a new date, respect that date's weekday setting (Full/Half)
-            const getWorkType = (dString) => {
-                const d = new Date(dString);
+            // Helper to determine shift type for a date based on MEMBER settings
+            const getWorkType = (d) => {
                 const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-                const setting = state.settings.workDays[dayNames[d.getDay()]];
+                const setting = mWorkDays[dayNames[d.getDay()]];
                 if (setting === 'HALF_AM') return 'HALF_AM';
                 if (setting === 'HALF_PM') return 'HALF_PM';
                 return 'ON_SITE';
             };
 
-            const isS1Work = s1 && s1 !== 'OFF';
-            const isS2Work = s2 && s2 !== 'OFF';
+            const isS1Work = getShiftDays(s1) > 0;
+            const isS2Work = getShiftDays(s2) > 0;
 
-            const newS1 = isS2Work ? getWorkType(dateStr1) : 'OFF';
-            const newS2 = isS1Work ? getWorkType(dateStr2) : 'OFF';
+            const newS1 = isS2Work ? getWorkType(d1) : 'OFF';
+            const newS2 = isS1Work ? getWorkType(d2) : 'OFF';
 
             setShift(dateStr1, m.id, newS1);
             setShift(dateStr2, m.id, newS2);
@@ -1272,7 +1525,8 @@ function validateSchedule() {
     workDays.forEach(d => {
         const dateStr = formatDate(d);
         let count = 0;
-        state.members.forEach(m => {
+        const list = getActiveMembers();
+        list.forEach(m => {
             const s = getShift(dateStr, m.id);
             count += getShiftDays(s);
         });
@@ -1292,12 +1546,8 @@ function validateSchedule() {
     });
 
     // Check variance (difference >= 2)
-    // Check variance (difference >= 2)
-    // DISABLED per user request: "メッセージ不要" avoiding automated retries and alerts for variance.
-    // Check Daily Variance (difference >= 2) per user request
     const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-    // First pass: Recalculate max/min considering ONLY full work days
     let validMaxCount = -1;
     let validMinCount = 9999;
     let hasValidDays = false;
@@ -1306,7 +1556,6 @@ function validateSchedule() {
         const d = new Date(dateStr);
         const dayKey = dayNames[d.getDay()];
         const setting = state.settings.workDays[dayKey];
-        // Skip if setting is HALF_AM or HALF_PM or OFF OR has Target
         if (setting === 'HALF_AM' || setting === 'HALF_PM' || setting === 'OFF') return;
         const hasTarget = state.dailyTargets && state.dailyTargets[dateStr] !== undefined && state.dailyTargets[dateStr] !== null && state.dailyTargets[dateStr] !== '';
         if (hasTarget) return;
@@ -1319,7 +1568,6 @@ function validateSchedule() {
     if (hasValidDays) {
         const variance = validMaxCount - validMinCount;
         if (variance >= 2) {
-            // Find dates with max and min counts
             const maxDates = [];
             const minDates = [];
 
@@ -1343,43 +1591,13 @@ function validateSchedule() {
         }
     }
 
-    /*
-    const variance = maxCount - minCount;
-    if (variance >= 2) {
-        // Find dates with max and min counts
-        const maxDates = [];
-        const minDates = [];
- 
-        Object.entries(dailyCounts).forEach(([dateStr, count]) => {
-            if (count === maxCount) maxDates.push(dateStr);
-            if (count === minDates) minDates.push(dateStr);
-        });
- 
-        warnings.push(`📊 日次出勤人数の差が大きすぎます: 最大${maxCount}人 - 最小${minCount}人 = ${variance}人差`);
-        warnings.push(`   最大: ${maxDates.join(', ')} (${maxCount}人)`);
-        warnings.push(`   最小: ${minDates.join(', ')} (${minCount}人)`);
-        warnings.push(`   推奨: 差を1人以内に抑えるため、連続勤務制限を緩和するか、メンバー数を調整してください`);
-    }
-    */
-
-    // Check if fixed shifts are causing variance issues
-    // DISABLED: variance logic removed
-    /*
-    if (variance >= 2) {
-        const fixedIssues = analyzeFixedShiftImpact(workDays, dailyCounts, maxCount, minCount);
-        if (fixedIssues.length > 0) {
-            warnings.push(`⚠️ 固定設定が出勤人数の偏りを引き起こしています`);
-            fixedIssues.forEach(issue => warnings.push(`   ${issue}`));
-        }
-    }
-    */
-
-    // Check consecutive work days
-    const limit = state.settings.maxConsecutive || 5;
-    state.members.forEach(m => {
+    // Check consecutive work days (Per Team Limit)
+    const list = getActiveMembers();
+    const limit = state.settings.maxConsecutive || 5; // Use global setting
+    list.forEach(m => {
         let consecutive = 0;
 
-        // Initialize consecutive based on last holiday
+        // Initialize from last holiday
         const lh = getLastHoliday(m.id);
         if (lh) {
             const startOfMonth = dates[0];
@@ -1391,53 +1609,19 @@ function validateSchedule() {
             }
         }
 
-        let maxConsecutive = consecutive; // Start max with initial carry-over
+        let maxConsecutive = consecutive;
 
         dates.forEach(d => {
             const s = getShift(formatDate(d), m.id);
-            if (getShiftDays(s) > 0) { // Any work (full or half day)
+            if (getShiftDays(s) > 0) {
                 consecutive++;
                 if (consecutive > maxConsecutive) maxConsecutive = consecutive;
-                if (consecutive > limit) {
-                    // Only push if not already warned for this sequence/date? 
-                    // Actually, just pushing dates is fine.
-                    // But we might duplicate warnings if we are not careful.
-                    // For now simple push.
-                    // violationDates.push(formatDate(d));
-                }
             } else {
                 consecutive = 0;
             }
         });
 
         if (maxConsecutive > limit) {
-            // Recalculate strict violation dates for display
-            // This is a bit lazy but ensures accuracy
-            let tempCons = 0;
-            if (lh) {
-                const diffVideo = Math.ceil((dates[0] - new Date(lh)) / (86400000));
-                if (diffVideo > 1) tempCons = diffVideo - 1;
-            }
-
-            let violatedRanges = [];
-            let currentRangeStart = null;
-
-            dates.forEach(d => {
-                const s = getShift(formatDate(d), m.id);
-                if (getShiftDays(s) > 0) {
-                    if (tempCons === 0) currentRangeStart = formatDate(d); // Start of working streak
-                    tempCons++;
-                } else {
-                    if (tempCons > limit) {
-                        // End of a violation streak
-                        // violatedRanges.push(...)
-                    }
-                    tempCons = 0;
-                    currentRangeStart = null;
-                }
-            });
-            // Check if ended in violation
-            // Simplified warning message:
             warnings.push(`👤 ${m.name}: 連続${maxConsecutive}日勤務 (制限: ${limit}日) ※前月考慮`);
         }
     });
@@ -1594,7 +1778,8 @@ function showContextMenu(e, dateStr) {
     menu.appendChild(header);
 
     // Add member options
-    state.members.forEach(m => {
+    const list = getActiveMembers();
+    list.forEach(m => {
         const shift = getShift(dateStr, m.id);
         const isLocked = isFixed(dateStr, m.id);
 
@@ -1737,6 +1922,7 @@ function render() {
         renderView();
     } else {
         renderSidebar();
+        renderTeams(); // Update Select Box
         renderCalendar();
         updateStats();
         updateUIInputs();
@@ -1746,16 +1932,53 @@ function render() {
 function renderSidebar() {
     els.memberList.innerHTML = '';
 
+    els.memberList.innerHTML = '';
+
     // --- Members Section ---
-    state.members.forEach(m => {
+    // --- Members Section ---
+    const list = getActiveMembers();
+
+    // Sort by Team
+    const getTeamIndex = (tid) => state.teams.findIndex(t => t.id === tid);
+    list.sort((a, b) => {
+        const idxA = getTeamIndex(a.teamId);
+        const idxB = getTeamIndex(b.teamId);
+        if (idxA !== idxB) return idxA - idxB;
+        // Then by original order (or index in activeMembers, but stable sort preserves it mostly)
+        return 0;
+    });
+
+    list.forEach(m => {
         const div = document.createElement('div');
         div.className = `member-item ${uiState.focusedMemberId === m.id ? 'focused' : ''}`;
         div.style.display = 'flex';
+
+        // Team Background Color (Faint)
+        // Team Background Color (Faint)
+        const teamId = m.teamId || (state.teams[0] ? state.teams[0].id : null);
+        if (teamId) {
+            const hex = getTeamColor(teamId);
+            // Robust Hex to RGB
+            let r = 0, g = 0, b = 0;
+            if (hex.length === 7) {
+                r = parseInt(hex.slice(1, 3), 16);
+                g = parseInt(hex.slice(3, 5), 16);
+                b = parseInt(hex.slice(5, 7), 16);
+            }
+
+            // Force application
+            let bgStyle = `rgba(${r}, ${g}, ${b}, 0.15)`;
+
+
+
+            div.style.setProperty('background-color', bgStyle, 'important');
+            div.style.borderLeft = `4px solid ${hex}`; // Stronger visual cue
+            div.style.borderColor = 'var(--border)'; // Keep outer border standard
+        }
         div.style.flexDirection = 'column';
         div.style.gap = '8px';
         div.style.padding = '8px';
         div.style.marginBottom = '4px';
-        div.style.backgroundColor = 'white';
         div.style.borderRadius = '6px';
         div.style.border = '1px solid var(--border)';
         div.style.cursor = 'pointer';
@@ -1774,7 +1997,7 @@ function renderSidebar() {
             <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
                 <div style="font-weight:500;">${m.name}</div>
                 <div style="display:flex; align-items:center; gap:4px;">
-                    <span style="font-size:0.7rem; color:var(--text-muted);">追加オフ</span>
+                    <span style="font-size:0.7rem; color:var(--text-muted);">休日＋</span>
                     <input type="number" value="${m.extraOff}" min="0" style="width:40px; padding:2px; font-size:0.8rem; border:1px solid var(--border); border-radius:4px;"
                         onchange="updateMember('${m.id}', 'extraOff', this.value)" onClick="event.stopPropagation()">
                     <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); deleteMember('${m.id}')" style="padding:4px; color:#ef4444;">
@@ -1853,6 +2076,8 @@ function renderSidebar() {
     });
     lucide.createIcons();
 }
+
+
 
 function renderCalendar() {
     els.calendarGrid.innerHTML = '';
@@ -1936,8 +2161,23 @@ function renderCalendar() {
         const contentDiv = document.createElement('div');
         contentDiv.className = 'cal-cell-content';
 
+        // Helper to sort members by Team Index (and then by Member Index/Name)
+        const getTeamIndex = (tid) => state.teams.findIndex(t => t.id === tid);
+
         // Render shifts for this date
-        state.members.forEach(m => {
+        const list = getActiveMembers();
+
+        // SORT: Group by Team
+        list.sort((a, b) => {
+            const tIdxA = getTeamIndex(a.teamId);
+            const tIdxB = getTeamIndex(b.teamId);
+            if (tIdxA !== tIdxB) return tIdxA - tIdxB;
+            // Same team, keep original order (or sort by ID/Name?)
+            // Assuming list is already in display order
+            return 0;
+        });
+
+        list.forEach(m => {
             const shift = getShift(dateStr, m.id);
             if (!shift || shift === 'OFF') return; // Skip OFF or empty
 
@@ -1949,6 +2189,22 @@ function renderCalendar() {
             chip.draggable = true;
             // Display first 3 characters of name
             chip.textContent = m.name.substring(0, 3);
+
+            // Team Color Indicator (Left Border)
+            const tColor = getTeamColor(m.teamId);
+            chip.style.borderLeft = `3px solid ${tColor}`;
+
+            // Background Tint (Faint)
+            if (m.teamId) {
+                const hex = tColor;
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                // Only apply if it's ON_SITE (white/blue gradient) to avoid clashing with AM/PM colors
+                if (shift === 'ON_SITE') {
+                    chip.style.backgroundColor = `rgba(${r}, ${g}, ${b}, 0.15)`;
+                }
+            }
 
             if (isFixed(dateStr, m.id)) {
                 chip.classList.add('locked');
@@ -2000,15 +2256,16 @@ function renderTimeline() {
     const dates = getDaysInMonth(state.settings.yearMonth);
 
     let html = `
-        <div class="timeline-wrapper">
+        <div class="timeline-scroll-wrapper">
             <table class="timeline-table">
                 <thead>
                     <tr>
                         <th class="timeline-member-cell header">メンバー</th>
     `;
 
-    // Header: Dates
+    // ... (Loop over dates for headers)
     dates.forEach(d => {
+        // ... (existing header logic)
         const dateStr = formatDate(d);
         const dayNum = d.getDate();
         const dayWeek = DAYS_JP[d.getDay()];
@@ -2043,116 +2300,178 @@ function renderTimeline() {
         `;
     });
 
+    // Added Headers for Stats
+    html += `
+            <th class="timeline-header-cell" style="width:40px; min-width:40px;">出勤</th>
+            <th class="timeline-header-cell" style="width:40px; min-width:40px;">休日</th>
+    `;
+
     html += `
                     </tr >
                 </thead >
                 <tbody>
     `;
 
-    // Rows: Members
-    state.members.forEach(m => {
-        const isFocused = uiState.focusedMemberId === m.id;
-        const isDimmed = uiState.focusedMemberId && uiState.focusedMemberId !== m.id;
+    // Rows: Members Grouped by Team
+    const activeMembers = getActiveMembers();
+    const groups = [];
+    state.teams.forEach(t => {
+        const members = activeMembers.filter(m => m.teamId === t.id);
+        if (members.length > 0) groups.push({ team: t, members });
+    });
+    const orphans = activeMembers.filter(m => !m.teamId || !state.teams.find(t => t.id === m.teamId));
+    if (orphans.length > 0) groups.push({ team: { id: 'orphan', name: '未所属' }, members: orphans });
 
-        let rowClass = 'timeline-row';
-        if (isFocused) rowClass += ' focused';
-        if (isDimmed) rowClass += ' dimmed';
+    groups.forEach(group => {
+        const teamColor = getTeamColor(group.team.id);
 
-        html += `<tr class="${rowClass}">`;
-
-        // Member Name Cell
-        html += `<td class="timeline-member-cell">
-            <div class="member-info">
-                <div class="member-name">${m.name}</div>
-                ${m.extraOff > 0 ? `<div style="font-size:0.65rem; color:#ef4444;">+オフ ${m.extraOff}</div>` : ''}
-            </div>
-        </td>`;
-
-        dates.forEach(d => {
-            const dateStr = formatDate(d);
-            const shift = getShift(dateStr, m.id);
-            const locked = isFixed(dateStr, m.id);
-            const workDay = isWorkDay(d);
-
-            let cellClass = 'timeline-cell';
-            if (!workDay) cellClass += ' non-work';
-            if (locked) cellClass += ' locked-cell';
-
-            // Add right-click to entire cell
-            html += `<td class="${cellClass}" 
-                         onclick="showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
-                         oncontextmenu="toggleLock('${dateStr}', '${m.id}'); return false;">`;
-
-            if (shift && shift !== 'OFF') {
-                // Use centralized icon constants
-                const icon = SHIFT_ICONS[shift] || '';
-                const typeClass = `type-${shift.toLowerCase().replace('_', '-')}`;
-
-                html += `
-                    <div class="timeline-chip ${typeClass} ${locked ? 'locked' : ''}"
-                         draggable="true"
-                         title="${SHIFT_LABELS[shift]}"
-                         onclick="event.stopPropagation(); showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
-                         oncontextmenu="event.stopPropagation(); toggleLock('${dateStr}', '${m.id}'); return false;"
-                         ondragstart="handleDragStart(event, '${m.id}', '${dateStr}')" 
-                         ondragend="this.classList.remove('is-dragging')">
-                        ${icon}
-                    </div>
-                `;
-            } else {
-                // Empty or OFF - show icon if locked
-                if (locked && shift === 'OFF') {
-                    html += `
-                        <div class="timeline-chip type-off locked"
-                             onclick="event.stopPropagation(); showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
-                             oncontextmenu="event.stopPropagation(); toggleLock('${dateStr}', '${m.id}'); return false;">
-                            ${SHIFT_ICONS.OFF}
-                        </div>
-                    `;
-                }
-                // Empty cell - no chip needed, cell itself is clickable
-            }
-
-            html += `</td>`;
-        });
-
-        // Add row statistics
-        let workDays = 0;
-        let daysOff = 0;
-        let lockedCount = 0;
-
-        dates.forEach(d => {
-            const dateStr = formatDate(d);
-            const shift = getShift(dateStr, m.id);
-            const locked = isFixed(dateStr, m.id);
-
-            workDays += getShiftDays(shift);
-            if (shift === 'OFF' || !shift) daysOff++;
-            if (locked) lockedCount++;
-        });
-
+        // 1. Team Header Row
         html += `
-            <td class="timeline-stats-cell">
-                <div class="row-stats">
-                    <div class="stat-badge">
-                        <span class="stat-badge-label">出勤</span>
-                        <span class="stat-badge-value" style="color:var(--primary);">${workDays}</span>
-                    </div>
-                    <div class="stat-badge">
-                        <span class="stat-badge-label">休日</span>
-                        <span class="stat-badge-value" style="color:var(--text-muted);">${daysOff}</span>
-                    </div>
-                    ${lockedCount > 0 ? `
-                    <div class="stat-badge warn">
-                        <span class="stat-badge-label">固定</span>
-                        <span class="stat-badge-value" style="color:#ef4444;">${lockedCount}</span>
-                    </div>` : ''}
-                </div>
-            </td>
+            <tr class="timeline-team-header" style="background-color: #f1f5f9; font-weight: bold;">
+                <td class="timeline-member-cell" style="border-left: 4px solid ${teamColor}; padding-left: 8px;">
+                    ▼ ${group.team.name}
+                </td>
+                <td colspan="${dates.length + 2}"></td> 
+            </tr>
         `;
 
+        // 2. Member Rows
+        group.members.forEach(m => {
+            const isFocused = uiState.focusedMemberId === m.id;
+            const isDimmed = uiState.focusedMemberId && uiState.focusedMemberId !== m.id;
+
+            let rowClass = 'timeline-row';
+            if (isFocused) rowClass += ' focused';
+            if (isDimmed) rowClass += ' dimmed';
+
+            html += `<tr class="${rowClass}">`;
+
+            // Background Color Logic
+            let cellBgStyle = '';
+            if (m.teamId) {
+                const hex = getTeamColor(m.teamId);
+                if (hex && hex.length === 7) {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    cellBgStyle = `background-color: rgba(${r}, ${g}, ${b}, 0.15);`;
+                }
+            } else {
+                cellBgStyle = 'background-color: white;';
+            }
+
+            // Member Name Cell with Team Color Indicator
+            html += `<td class="timeline-member-cell" style="border-left: 4px solid ${teamColor}; ${cellBgStyle}">
+                <div class="member-info">
+                    <div class="member-name">${m.name}</div>
+                    ${m.extraOff > 0 ? `<div style="font-size:0.65rem; color:#ef4444;">+休日 ${m.extraOff}</div>` : ''}
+                </div>
+            </td>`;
+
+            dates.forEach(d => {
+                const dateStr = formatDate(d);
+                const shift = getShift(dateStr, m.id);
+                const locked = isFixed(dateStr, m.id);
+                const workDay = isWorkDay(d);
+
+                let cellClass = 'timeline-cell';
+                if (!workDay) cellClass += ' non-work';
+                if (locked) cellClass += ' locked-cell';
+
+                // Add right-click to entire cell
+                html += `<td class="${cellClass}" 
+                             onclick="showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
+                             oncontextmenu="toggleLock('${dateStr}', '${m.id}'); return false;">`;
+
+                if (shift && shift !== 'OFF') {
+                    // Use centralized icon constants
+                    const icon = SHIFT_ICONS[shift] || '';
+                    const typeClass = `type-${shift.toLowerCase().replace('_', '-')}`;
+
+                    html += `
+                        <div class="timeline-chip ${typeClass} ${locked ? 'locked' : ''}"
+                             draggable="true"
+                             title="${SHIFT_LABELS[shift]}"
+                             onclick="event.stopPropagation(); showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
+                             oncontextmenu="event.stopPropagation(); toggleLock('${dateStr}', '${m.id}'); return false;"
+                             ondragstart="handleDragStart(event, '${m.id}', '${dateStr}')" 
+                             ondragend="this.classList.remove('is-dragging')">
+                            ${icon}
+                        </div>
+                    `;
+                } else {
+                    // Empty or OFF - show icon if locked
+                    if (locked && shift === 'OFF') {
+                        html += `
+                            <div class="timeline-chip type-off locked"
+                                 onclick="event.stopPropagation(); showShiftTypeSelector(event, '${dateStr}', '${m.id}')"
+                                 oncontextmenu="event.stopPropagation(); toggleLock('${dateStr}', '${m.id}'); return false;">
+                                ${SHIFT_ICONS.OFF}
+                            </div>
+                        `;
+                    }
+                }
+                html += `</td>`;
+            });
+
+            // Add row statistics
+            let workDays = 0;
+            let daysOff = 0;
+
+            dates.forEach(d => {
+                const dateStr = formatDate(d);
+                const shift = getShift(dateStr, m.id);
+                workDays += getShiftDays(shift);
+                if (shift === 'OFF' || !shift) daysOff++;
+            });
+
+            // Dedicated Columns for Stats
+            html += `
+                <td class="timeline-stats-cell" style="text-align:center; font-weight:bold; color:var(--primary);">
+                    ${workDays}
+                </td>
+                <td class="timeline-stats-cell" style="text-align:center; color:var(--text-muted);">
+                    ${daysOff}
+                </td>
+            `;
+            html += `</tr>`;
+        }); // End Members Loop
+
+        // 3. Team Summary Row
+        html += `<tr class="timeline-team-summary" style="background-color: #f8fafc; border-top: 1px dashed #cbd5e1;">
+            <td class="timeline-footer-label" style="text-align:right; font-size:0.75rem; color:var(--text-muted);">
+                ${group.team.name} 計
+            </td>`;
+
+        let groupTotalWork = 0;
+        let groupTotalOff = 0;
+
+        dates.forEach(d => {
+            const dateStr = formatDate(d);
+            let teamCount = 0;
+            group.members.forEach(m => {
+                const s = getShift(dateStr, m.id);
+                teamCount += getShiftDays(s);
+            });
+            groupTotalWork += teamCount;
+            // Off count for team day isn't usually summed vertically like this, but we can do it later if needed.
+            // Just output daily work sum
+            html += `<td style="text-align:center; font-size:0.75rem; font-weight:bold; color:var(--text-muted);">${teamCount}</td>`;
+        });
+
+        // Sum Columns
+        group.members.forEach(m => {
+            dates.forEach(d => {
+                const s = getShift(formatDate(d), m.id);
+                if (s === 'OFF' || !s) groupTotalOff++;
+            });
+        });
+
+        html += `<td style="text-align:center; font-weight:bold;">${groupTotalWork}</td>`;
+        html += `<td style="text-align:center; color:var(--text-muted);">${groupTotalOff}</td>`; // Optional
         html += `</tr>`;
-    });
+
+    }); // End Groups Loop
 
     html += `
                 </tbody>
@@ -2173,9 +2492,10 @@ function renderTimeline() {
 
         html += `<td class="${styleClass}">${onSiteCount}</td>`;
     });
-    html += `<td class="timeline-footer-cell"></td></tr>`;
+    // Footer spacer for stat columns
+    html += `<td class="timeline-footer-cell"></td><td class="timeline-footer-cell"></td></tr>`;
 
-    // Row 2: Off/Other Count (Total - OnSite)
+    // Row 2: Off/Other Count
     html += `<tr><td class="timeline-footer-label">休日/他</td>`;
     dates.forEach(d => {
         const dateStr = formatDate(d);
@@ -2185,10 +2505,9 @@ function renderTimeline() {
 
         html += `<td class="timeline-footer-cell" style="color:#64748b;">${offCount}</td>`;
     });
-    html += `<td class="timeline-footer-cell"></td></tr>`;
+    html += `<td class="timeline-footer-cell"></td><td class="timeline-footer-cell"></td></tr>`;
 
-    // Row 3: Variance from Target (only if target exists)
-    // Check if any target exists to decide if we show this row
+    // Row 3: Variance
     const hasTargets = Object.keys(state.dailyTargets || {}).length > 0;
 
     if (hasTargets) {
@@ -2209,7 +2528,7 @@ function renderTimeline() {
                 html += `<td class="timeline-footer-cell">-</td>`;
             }
         });
-        html += `<td class="timeline-footer-cell"></td></tr>`;
+        html += `<td class="timeline-footer-cell"></td><td class="timeline-footer-cell"></td></tr>`;
     }
 
     html += `
@@ -2227,7 +2546,8 @@ function countOnSite(dateStr) {
     if (!state.shifts[dateStr]) return 0;
     // Iterate only active members to avoid counting deleted "ghost" members
     let count = 0;
-    state.members.forEach(m => {
+    const list = getActiveMembers();
+    list.forEach(m => {
         const s = state.shifts[dateStr][m.id];
         if (s === 'ON_SITE') count++;
     });
@@ -2336,6 +2656,7 @@ function loadState() {
                 }
             }
 
+            // Merge Saved Data
             state = { ...state, ...parsed };
 
             // Final safety check
@@ -2345,7 +2666,52 @@ function loadState() {
                     sat: 'OFF', sun: 'OFF'
                 };
             }
+
+            migrateAndValidateState();
+
         } catch (e) { console.error("Load failed", e); }
+    }
+}
+
+// Helper to ensure state data is valid and migrated to latest version
+function migrateAndValidateState() {
+    // 1. Ensure state.teams is an array
+    if (!Array.isArray(state.teams)) {
+        state.teams = [];
+    }
+
+    // 2. If no teams exist, create Default "Team 1"
+    if (state.teams.length === 0) {
+        const defaultTeam = { id: 't1', name: 'チーム1' };
+        state.teams.push(defaultTeam);
+        // Force switch to it immediately so user sees it
+        state.settings.currentTeamId = defaultTeam.id;
+    }
+
+    // 3. Ensure all members belong to a valid team
+    // If a member has no teamId (legacy), or has an invalid teamId, assign to the first available team.
+    if (state.members && state.members.length > 0) {
+        // Get a fallback team ID (first one)
+        const fallbackTeamId = state.teams[0].id;
+
+        state.members.forEach(m => {
+            // Check if teamId is missing OR if the teamId it refers to doesn't exist
+            const belongsToValidTeam = m.teamId && state.teams.some(t => t.id === m.teamId);
+
+            if (!belongsToValidTeam) {
+                m.teamId = fallbackTeamId;
+            }
+        });
+    }
+
+    // 4. Validate Current Team View
+    // If currentTeamId is invalid (not 'ALL' and not in teams), reset to 'ALL' or fallback
+    const current = state.settings.currentTeamId;
+    const validView = current === 'ALL' || state.teams.some(t => t.id === current);
+
+    if (!validView) {
+        // Default to the first team if available, otherwise ALL
+        state.settings.currentTeamId = state.teams.length > 0 ? state.teams[0].id : 'ALL';
     }
 }
 
@@ -2383,6 +2749,10 @@ function importData(event) {
             const { version, ...cleanData } = parsed;
 
             state = cleanData;
+
+            // KEY FIX: Run migration logic to support legacy files or missing team data
+            migrateAndValidateState();
+
             saveState();
             render();
             // Update inputs
@@ -2422,9 +2792,42 @@ window.setViewMode = function (mode) {
 els.btnViewCal.addEventListener('click', () => setViewMode('calendar'));
 els.btnViewTimeline.addEventListener('click', () => setViewMode('timeline'));
 
+// --- Update UI Inputs ---
+function updateUIInputs() {
+    if (!state.settings.yearMonth) return;
+
+    // Always use global settings
+    const settings = state.settings;
+
+    if (els.monthInput) els.monthInput.value = settings.yearMonth;
+    if (els.settingBaseOff) els.settingBaseOff.value = settings.baseOff;
+    if (els.settingMaxConsecutive) els.settingMaxConsecutive.value = settings.maxConsecutive;
+    if (els.optimizationStrength) els.optimizationStrength.value = settings.optimizationStrength || 'medium';
+
+    const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    days.forEach(day => {
+        const key = 'day' + day.charAt(0).toUpperCase() + day.slice(1);
+        if (els[key] && settings.workDays) {
+            els[key].value = settings.workDays[day];
+        }
+    });
+
+    // Color updates for selects
+    document.querySelectorAll('.weekday-setting select').forEach(sel => {
+        const updateColor = () => {
+            if (sel.value === 'OFF') sel.style.color = 'var(--danger)';
+            else if (sel.value === 'WORK') sel.style.color = 'var(--text)';
+            else sel.style.color = 'var(--primary)';
+        };
+        updateColor();
+        sel.onchange = updateColor;
+    });
+}
+
 // --- Rendering ---
 function renderView() {
     renderSidebar();
+    renderTeams();
 
     const calArea = document.querySelector('.calendar-area');
     const tlContainer = document.getElementById('timeline-container');

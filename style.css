@@ -211,6 +211,12 @@ body {
 /* Sidebar */
 .sidebar {
     width: 320px;
+    min-width: 320px;
+    /* Prevent shrinking */
+    max-width: 320px;
+    /* Prevent growing */
+    flex: 0 0 320px;
+    /* Fixed flex basis */
     background-color: var(--bg-surface);
     border-right: 1px solid var(--border);
     display: flex;
@@ -586,7 +592,7 @@ body {
 }
 
 .shift-chip.locked::after {
-    content: '🔒';
+    /* content: '🔒'; Removed by user request */
     font-size: 0.6rem;
     margin-left: 4px;
 }
@@ -748,6 +754,16 @@ body {
         /* Hide separator */
     }
 
+    /* Fixed width for member column to match sidebar */
+    .timeline-member-cell.header {
+        min-width: 320px;
+        width: 320px;
+        max-width: 320px;
+        text-align: left;
+        padding-left: 24px;
+        /* match sidebar padding */
+    }
+
     .timeline-table thead th:first-child {
         border-top-left-radius: 8px;
         border-bottom-left-radius: 8px;
@@ -790,6 +806,26 @@ body {
         padding: 6px;
         font-size: 0.8rem;
         text-align: center;
+        /* Center align by default */
+    }
+
+    /* Widen Full Input (Team Select) */
+    .input-full,
+    #team-select {
+        width: 100%;
+        box-sizing: border-box;
+        /* Ensure padding doesn't overflow */
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-family: var(--font-sans);
+        font-size: 1.3rem;
+        font-weight: bold;
+        height: 56px;
+        /* Force height even larger */
+        background-color: white;
+        appearance: auto;
+        /* Ensure arrow appears */
     }
 
     .timeline-footer-label {
@@ -1448,17 +1484,39 @@ body {
 }
 
 /* Timeline Layout Adjustments */
+/* Timeline Layout Adjustments */
 #timeline-container {
-    overflow-x: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     width: 100%;
-    padding-bottom: 20px;
-    /* Space for scrollbar */
+    padding: 24px;
+    /* Alignment with calendar-area */
+    margin-top: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
 }
 
+/* New Scroll Wrapper */
+.timeline-scroll-wrapper {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: white;
+}
+
+
 .timeline-table {
-    width: max-content;
+    width: 100%;
+    /* Fill container */
+    min-width: 1200px;
+    /* Force scroll on small screens */
+    table-layout: fixed;
+    /* Equal distribution of variable columns */
     border-collapse: separate;
-    /* Required for sticky */
     border-spacing: 0;
 }
 
@@ -1469,30 +1527,70 @@ body {
     left: 0;
     z-index: 10;
     background: white;
-    box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.1);
-    width: 200px;
-    /* Match sidebar approximate width or adjust to user preference */
-    min-width: 200px;
+    /* Remove shadow for cleaner look, use border */
     border-right: 1px solid var(--border);
+    width: 160px;
+    /* Fixed width respected by table-layout: fixed */
+    min-width: 160px;
+    padding: 0 12px;
 }
 
 .timeline-member-cell.header {
-    z-index: 11;
+    z-index: 20;
     /* Higher than row cells */
+    background: #f8fafc;
+    /* Match header row */
+    font-weight: bold;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    display: table-cell;
+    vertical-align: middle;
+    text-align: center;
 }
 
 /* Narrower Timeline Cells */
 .timeline-cell {
+    /* Removed width: 36px to allow expansion in fixed layout */
+    /* Min-width is ignored by table-layout: fixed but good for reference/fallback */
     min-width: 32px;
-    /* Narrower than before */
-    width: 32px;
+    height: 48px;
+    /* Fixed height for consistency */
+    border-right: 1px solid #f1f5f9;
+    /* Faint vertical divider */
+    border-bottom: 1px solid #f1f5f9;
 }
 
 .timeline-header-cell {
+    /* Removed width: 36px */
     min-width: 32px;
-    width: 32px;
-    padding: 2px;
+    height: 64px;
+    /* Taller header */
+    padding: 4px;
     font-size: 0.8rem;
+    background-color: #f8fafc;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    vertical-align: top;
+    text-align: center;
+    position: relative;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.timeline-header-cell:hover {
+    background-color: #f1f5f9;
+}
+
+.day-num {
+    font-size: 1.1rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.day-week {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
 }
 
 /* Ensure chips fit in narrow cells */
@@ -1534,28 +1632,30 @@ body {
 }
 
 /* Summary & Footer Styles */
-.print-timeline .summary-col {
-    background-color: #f3f4f6;
-    font-weight: bold;
-    width: 40px;
-}
-
-.print-timeline tr.summary-row td {
-    background-color: #f3f4f6;
-    font-weight: bold;
-    border-top: 2px solid #999;
-}
-
-/* Calendar Grid Layout */
+/* Calendar Grid Layout for Print */
 .print-cell-content {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(4, 1fr);
+    /* 4 columns as requested */
     gap: 2px;
     font-size: 0.7rem;
+}
+
+.print-timeline .summary-col {
+    gap: 2px;
+    font-size: 0.7rem;
+    font-weight: bold;
+    width: 40px;
 }
 
 .print-shift-item {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* Force Center Alignment for Timeline Footer */
+.timeline-footer-cell,
+.timeline-footer-label {
+    text-align: center !important;
 }
