@@ -27,8 +27,12 @@
         <!-- Header -->
         <header class="app-header">
             <div class="logo-area">
+                <button id="btn-toggle-sidebar" class="btn btn-icon btn-sm btn-ghost" title="メニュー開閉"
+                    style="margin-right: 8px;">
+                    <i data-lucide="menu"></i>
+                </button>
                 <i data-lucide="zap" class="logo-icon"></i>
-                <h1 class="app-title">瞬勤 <span class="app-subtitle">Shunkin</span></h1>
+                <h1 class="app-title">瞬勤</h1>
                 <button id="btn-help" class="btn btn-icon btn-sm btn-ghost" title="使い方" style="margin-left: 8px;">
                     <i data-lucide="help-circle"></i>
                 </button>
@@ -36,7 +40,7 @@
 
             <div class="header-controls">
                 <div class="control-group">
-                    <label for="month-picker">対象月</label>
+
                     <div class="month-nav" style="display: flex; align-items: center; gap: 4px;">
                         <button id="btn-prev-month" class="btn btn-icon btn-sm btn-ghost" title="前月">
                             <i data-lucide="chevron-left"></i>
@@ -57,15 +61,21 @@
                         </button>
                     </div>
                 </div>
+                <div class="control-group">
+                    <button id="btn-toggle-off-members" class="btn btn-sm btn-outline" title="休日の人を表示/非表示">
+                        <i data-lucide="eye"></i>
+                    </button>
+                </div>
+
 
                 <div class="action-buttons">
                     <div class="control-group">
                         <label for="optimization-strength">最適化:</label>
                         <select id="optimization-strength" class="select-strength">
-                            <option value="weak">弱 (速)</option>
-                            <option value="medium" selected>中 (標準)</option>
-                            <option value="strong">強 (精密)</option>
-                            <option value="strongest">最強 (10倍)</option>
+                            <option value="weak">弱</option>
+                            <option value="medium" selected>中</option>
+                            <option value="strong">強</option>
+                            <option value="strongest">最強</option>
                         </select>
                     </div>
                     <button id="btn-generate" class="btn btn-primary">
@@ -311,7 +321,16 @@
     </div>
 
     <!-- Scripts -->
-    <script src="script.js"></script>
+    <!-- Scripts -->
+    <script src="js/constants.js"></script>
+    <script src="js/state.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/logic.js"></script>
+    <script src="js/generator.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/print.js"></script>
+    <script src="js/modal.js"></script>
+    <script src="js/init.js"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
