@@ -774,7 +774,7 @@ function renderTimeline() {
         const onSiteCount = countOnSite(dateStr);
         const target = state.dailyTargets && state.dailyTargets[dateStr];
         let styleClass = 'timeline-footer-cell';
-        if (target && onSiteCount !== parseInt(target)) styleClass += ' warn';
+        if (target && onSiteCount !== parseFloat(target)) styleClass += ' warn';
         html += `<td class="${styleClass}">${onSiteCount}</td>`;
     });
     html += `<td class="timeline-footer-cell"></td><td class="timeline-footer-cell"></td></tr>`;
@@ -798,13 +798,15 @@ function renderTimeline() {
             const target = state.dailyTargets && state.dailyTargets[dateStr];
 
             if (target) {
-                const diff = onSiteCount - parseInt(target);
+                const diff = onSiteCount - parseFloat(target);
                 let content = diff > 0 ? `+${diff}` : `${diff}`;
-                if (diff === 0) content = "OK";
-                let color = diff === 0 ? '#10b981' : (diff > 0 ? '#3b82f6' : '#ef4444');
-                html += `<td class="timeline-footer-cell" style="color:${color}; font-weight:bold;">${content}</td>`;
+                if (diff === 0) content = '0'; // Clean zero
+
+                let styleClass = 'timeline-footer-cell';
+                if (diff !== 0) styleClass += ' warn'; // Highlight non-zero variance
+                html += `<td class="${styleClass}">${content}</td>`;
             } else {
-                html += `<td class="timeline-footer-cell">-</td>`;
+                html += `<td class="timeline-footer-cell"></td>`;
             }
         });
         html += `<td class="timeline-footer-cell"></td><td class="timeline-footer-cell"></td></tr>`;

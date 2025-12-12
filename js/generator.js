@@ -153,7 +153,8 @@ async function generateSchedule(retryCount = 0) {
 
             // First, check if we need to assign a half-shift to balance a 0.5 remainder
             // If neededWorkAmount has 0.5 remainder, we MUST assign one half-shift.
-            let needsHalfShift = (neededWorkAmount % 1) !== 0;
+            // Use epsilon for float safety
+            let needsHalfShift = Math.abs(neededWorkAmount % 1) > 0.1;
 
             sortedAvailable.forEach((dateStr, idx) => {
                 const date = new Date(dateStr);
@@ -161,8 +162,8 @@ async function generateSchedule(retryCount = 0) {
                 const dayKey = dayNames[date.getDay()];
                 const setting = state.settings.workDays[dayKey];
 
-                // Check if we have filled the quota
-                if (assignedWork < neededWorkAmount) {
+                // Check if we have filled the quota (with buffer)
+                if (assignedWork < neededWorkAmount - 0.1) {
 
                     // Logic to decide shift type
                     let shiftType = 'ON_SITE';
@@ -250,7 +251,7 @@ async function generateSchedule(retryCount = 0) {
                 // Target Headcount Constraint
                 const target = state.dailyTargets && state.dailyTargets[dateStr];
                 if (target !== undefined && target !== null && target !== '') {
-                    const diff = Math.abs(count - parseInt(target));
+                    const diff = Math.abs(count - parseFloat(target));
                     if (diff > 0) score += diff * 5000;
 
                     // Daily Team Balance Penalty
@@ -289,9 +290,11 @@ async function generateSchedule(retryCount = 0) {
             });
 
             // Strict Variance Penalty (Global)
-            if (maxCount !== -1 && (maxCount - minCount) >= 2) {
+            // User requested "Within 1" (<= 1.0). So > 1.0 is penalized.
+            // Using 1.001 to avoid floating point issues.
+            if (maxCount !== -1 && (maxCount - minCount) > 1.001) {
                 const diff = maxCount - minCount;
-                score += diff * 10000;
+                score += diff * 50000; // Increased penalty logic
             }
 
             // Strict Variance Penalty (Per Team)
@@ -393,7 +396,7 @@ async function generateSchedule(retryCount = 0) {
                     if (c > maxC) maxC = c;
                 });
 
-                if (maxC !== -1 && (maxC - minC) < 2) break;
+                if (maxC !== -1 && (maxC - minC) < 1.001) break;
 
                 Object.entries(dailyCounts).forEach(([ds, c]) => {
                     if (c === minC) minDates.push(ds);
@@ -411,25 +414,28 @@ async function generateSchedule(retryCount = 0) {
                     for (const minD of minDates) {
                         if (maxD === minD) continue;
 
+                        const getWorkType = (dString) => {
+                            const d = new Date(dString);
+                            const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                            const setting = state.settings.workDays[dayNames[d.getDay()]];
+                            if (setting === 'HALF_AM') return 'HALF_AM';
+                            if (setting === 'HALF_PM') return 'HALF_PM';
+                            return 'ON_SITE';
+                        };
+
                         const candidates = targetMembers.filter(m => {
                             if (checkFixed(maxD, m.id) || checkFixed(minD, m.id)) return false;
                             const sMax = getShift(maxD, m.id);
                             const sMin = getShift(minD, m.id);
-                            return (getShiftDays(sMax) >= 1 && getShiftDays(sMin) === 0 && sMin === 'OFF');
+                            // Ensure strict move: Full -> Full (or Equal Value)
+                            // Only move if destination allows same value
+                            const potentialDest = getWorkType(minD);
+                            return (getShiftDays(sMax) >= 1 && getShiftDays(sMin) === 0 && sMin === 'OFF' &&
+                                Math.abs(getShiftDays(sMax) - getShiftDays(potentialDest)) < 0.01);
                         });
 
                         if (candidates.length > 0) {
                             const m = candidates[Math.floor(Math.random() * candidates.length)];
-
-                            const getWorkType = (dString) => {
-                                const d = new Date(dString);
-                                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-                                const setting = state.settings.workDays[dayNames[d.getDay()]];
-                                if (setting === 'HALF_AM') return 'HALF_AM';
-                                if (setting === 'HALF_PM') return 'HALF_PM';
-                                return 'ON_SITE';
-                            };
-
                             const newSMin = getWorkType(minD);
 
                             setShift(maxD, m.id, 'OFF');
@@ -504,6 +510,15 @@ async function generateSchedule(retryCount = 0) {
 
             const newS1 = isS2Work ? getWorkType(d1) : 'OFF';
             const newS2 = isS1Work ? getWorkType(d2) : 'OFF';
+
+            // Validate Conservation of Mass (Work Days)
+            // Prevent changing Total Work (e.g. swapping Full <-> Half)
+            const val1_old = getShiftDays(s1);
+            const val2_old = getShiftDays(s2);
+            const val1_new = getShiftDays(newS1);
+            const val2_new = getShiftDays(newS2);
+
+            if (Math.abs((val1_old + val2_old) - (val1_new + val2_new)) > 0.001) continue;
 
             setShift(dateStr1, m.id, newS1);
             setShift(dateStr2, m.id, newS2);
