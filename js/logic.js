@@ -378,7 +378,7 @@ function countOnSite(dateStr) {
     const list = getActiveMembers();
     list.forEach(m => {
         const s = state.shifts[dateStr][m.id];
-        if (s === 'ON_SITE') count++;
+        count += getShiftDays(s);
     });
     return count;
 }

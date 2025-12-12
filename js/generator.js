@@ -114,13 +114,13 @@ async function generateSchedule(retryCount = 0) {
                 }
             });
 
-            // B. Calculate Target Work Days
+            // B. Calculate Target Work Days (Float)
             // Target = TotalDays - BaseOff - TeamBaseOff
             const totalDays = dates.length;
-            const targetWork = Math.max(0, totalDays - state.settings.baseOff - (m.extraOff || 0));
+            const targetWorkAmount = Math.max(0, totalDays - state.settings.baseOff - (m.extraOff || 0));
 
-            // Count current fixed Work
-            let currentWork = 0;
+            // Count current fixed Work (Float)
+            let currentWorkAmount = 0;
             let availableWorkDays = [];
 
             dates.forEach(d => {
@@ -128,40 +128,86 @@ async function generateSchedule(retryCount = 0) {
                 // Only consider WorkDays for assignment pool
                 if (isWorkDay(d)) {
                     const s = getShift(dateStr, m.id);
-                    if (s === 'ON_SITE' || s === 'TRIP' || s === 'HALF_AM' || s === 'HALF_PM') {
-                        currentWork++;
-                    } else if (!s) {
+                    if (s) {
+                        currentWorkAmount += getShiftDays(s);
+                    } else {
                         availableWorkDays.push(dateStr);
                     }
                 } else {
                     // Non-work day. Check if Fixed Work
                     const s = getShift(dateStr, m.id);
-                    if (s === 'ON_SITE' || s === 'TRIP') currentWork++;
+                    if (s) currentWorkAmount += getShiftDays(s);
                 }
             });
 
-            const neededWork = targetWork - currentWork;
+            const neededWorkAmount = targetWorkAmount - currentWorkAmount;
 
-            // Shuffle available
+            // Randomize available slots
             const sortedAvailable = [...availableWorkDays];
             for (let i = sortedAvailable.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [sortedAvailable[i], sortedAvailable[j]] = [sortedAvailable[j], sortedAvailable[i]];
             }
 
-            sortedAvailable.forEach((dateStr, idx) => {
-                if (idx < neededWork) {
-                    // Assign correct shift type based on weekday setting
-                    const date = new Date(dateStr);
-                    const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-                    const dayKey = dayNames[date.getDay()];
-                    const setting = state.settings.workDays[dayKey];
+            let assignedWork = 0;
 
+            // First, check if we need to assign a half-shift to balance a 0.5 remainder
+            // If neededWorkAmount has 0.5 remainder, we MUST assign one half-shift.
+            let needsHalfShift = (neededWorkAmount % 1) !== 0;
+
+            sortedAvailable.forEach((dateStr, idx) => {
+                const date = new Date(dateStr);
+                const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                const dayKey = dayNames[date.getDay()];
+                const setting = state.settings.workDays[dayKey];
+
+                // Check if we have filled the quota
+                if (assignedWork < neededWorkAmount) {
+
+                    // Logic to decide shift type
                     let shiftType = 'ON_SITE';
-                    if (setting === 'HALF_AM') shiftType = 'HALF_AM';
-                    else if (setting === 'HALF_PM') shiftType = 'HALF_PM';
+                    let shiftValue = 1.0;
+
+                    // If we need a half shift to balance, try to assign it
+                    if (needsHalfShift) {
+                        // Can we assign half shift here?
+                        // If setting is HALF_AM/PM, yes. If WORK, yes (usually).
+                        // If specific setting dictates, follow it.
+                        if (setting === 'HALF_AM') { shiftType = 'HALF_AM'; shiftValue = 0.5; needsHalfShift = false; }
+                        else if (setting === 'HALF_PM') { shiftType = 'HALF_PM'; shiftValue = 0.5; needsHalfShift = false; }
+                        else {
+                            // If generic WORK, force a HALF_AM to balance the count
+                            // (Preference: AM for balancing unless specified)
+                            shiftType = 'HALF_AM';
+                            shiftValue = 0.5;
+                            needsHalfShift = false;
+                        }
+                    } else {
+                        // Normal assignment
+                        if (setting === 'HALF_AM') { shiftType = 'HALF_AM'; shiftValue = 0.5; }
+                        else if (setting === 'HALF_PM') { shiftType = 'HALF_PM'; shiftValue = 0.5; }
+                        else { shiftType = 'ON_SITE'; shiftValue = 1.0; }
+                    }
+
+                    // Avoid over-filling?
+                    // If we only need 0.5 but try to assign 1.0 (ON_SITE), what to do?
+                    // logic: if (assignedWork + shiftValue > neededWorkAmount) -> force half?
+                    // If needed is 0.5, and we try to assign ON_SITE (1.0), we exceed.
+                    // The loop condition (assignedWork < neededWorkAmount) allows entry.
+                    // But we should cap it.
+                    if (assignedWork + shiftValue > neededWorkAmount + 0.001) {
+                        // If we are about to exceed, simplify to HALF if possible, or stop?
+                        // Actually if we only need 0.5, 'needsHalfShift' should have triggered.
+                        // If we failed to clear needsHalfShift previously (maybe no suitable day?), we might force it now.
+                        if (shiftValue === 1.0) {
+                            shiftType = 'HALF_AM';
+                            shiftValue = 0.5;
+                        }
+                    }
 
                     setShift(dateStr, m.id, shiftType);
+                    assignedWork += shiftValue;
+
                 } else {
                     setShift(dateStr, m.id, 'OFF');
                 }

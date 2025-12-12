@@ -724,8 +724,9 @@ function renderTimeline() {
             let workDays = 0, daysOff = 0;
             dates.forEach(d => {
                 const s = getShift(formatDate(d), m.id);
-                workDays += getShiftDays(s);
-                if (s === 'OFF' || !s) daysOff++;
+                const w = getShiftDays(s);
+                workDays += w;
+                daysOff += (1 - w);
             });
 
             html += `
@@ -753,7 +754,8 @@ function renderTimeline() {
         group.members.forEach(m => {
             dates.forEach(d => {
                 const s = getShift(formatDate(d), m.id);
-                if (s === 'OFF' || !s) groupTotalOff++;
+                const w = getShiftDays(s);
+                groupTotalOff += (1 - w);
             });
         });
 
