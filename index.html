@@ -38,6 +38,9 @@
                 </button>
             </div>
 
+            <button id="btn-header-menu" class="btn btn-ghost icon-only mobile-only" style="display: none;">
+                <i data-lucide="menu"></i>
+            </button>
             <div class="header-controls">
                 <div class="control-group">
 
@@ -54,23 +57,23 @@
                 <div class="control-group">
                     <div class="view-toggle">
                         <button id="btn-view-cal" class="btn btn-sm btn-primary" title="カレンダー表示">
-                            <i data-lucide="calendar"></i>
+                            <i data-lucide="calendar"></i> <span class="mobile-label">カレンダー表示</span>
                         </button>
                         <button id="btn-view-timeline" class="btn btn-sm btn-secondary" title="タイムライン表示">
-                            <i data-lucide="table-2"></i>
+                            <i data-lucide="table-2"></i> <span class="mobile-label">タイムライン表示</span>
                         </button>
                     </div>
                 </div>
                 <div class="control-group">
                     <button id="btn-toggle-off-members" class="btn btn-sm btn-outline" title="休日の人を表示/非表示">
-                        <i data-lucide="eye"></i>
+                        <i data-lucide="eye"></i> <span class="mobile-label">休日の人を表示</span>
                     </button>
                 </div>
 
 
                 <div class="action-buttons">
                     <div class="control-group">
-                        <label for="optimization-strength">最適化:</label>
+                        <label for="optimization-strength" class="mobile-label-inline">最適化:</label>
                         <select id="optimization-strength" class="select-strength">
                             <option value="weak">弱</option>
                             <option value="medium" selected>中</option>
@@ -79,19 +82,19 @@
                         </select>
                     </div>
                     <button id="btn-generate" class="btn btn-primary">
-                        <i data-lucide="sparkles"></i> 自動生成
+                        <i data-lucide="sparkles"></i> <span>自動生成</span>
                     </button>
                     <button id="btn-reset" class="btn btn-secondary">
-                        <i data-lucide="rotate-ccw"></i> リセット
+                        <i data-lucide="rotate-ccw"></i> <span>リセット</span>
                     </button>
                     <button id="btn-print" class="btn btn-ghost">
-                        <i data-lucide="printer"></i> 印刷
+                        <i data-lucide="printer"></i> <span>印刷</span>
                     </button>
                     <button id="btn-export" class="btn btn-ghost icon-only" title="Export JSON">
-                        <i data-lucide="download"></i>
+                        <i data-lucide="download"></i> <span class="mobile-label">JSONエクスポート</span>
                     </button>
                     <button id="btn-import" class="btn btn-ghost icon-only" title="Import JSON">
-                        <i data-lucide="upload"></i>
+                        <i data-lucide="upload"></i> <span class="mobile-label">JSONインポート</span>
                     </button>
                     <input type="file" id="file-import" accept=".json" style="display: none;">
                 </div>

@@ -492,21 +492,10 @@ function renderCalendar() {
         });
 
         list.forEach(m => {
-            const shift = getShift(dateStr, m.id);
-            // If setting false, hide OFF members
-            if (!state.settings.showOffMembers && (!shift || shift === 'OFF')) return;
-            // If setting true, always show (unless no shift definition, but usually getShift returns OFF or something)
-            // Actually getShift defaults to 'OFF' if undefined.
-            // If showOffMembers is TRUE, we want to show OFF.
-            // Wait, existing logic was: if (!shift || shift === 'OFF') return;
-            // This means it was ALWAYS hiding OFF members.
-            // The user said "Toggle ON/OFF".
-            // So default (old behavior) was HIDING OFF members?
-            // Let's check the code: line 496 says `if (!shift || shift === 'OFF') return;`
-            // Yes, it was hiding them.
-            // So if showOffMembers is TRUE, we should NOT return here.
+            const shift = getShift(dateStr, m.id) || 'OFF';
 
-            if (!state.settings.showOffMembers && (!shift || shift === 'OFF')) return;
+            // If setting false, hide OFF members
+            if (!state.settings.showOffMembers && shift === 'OFF') return;
 
             if (uiState.focusedMemberId && uiState.focusedMemberId !== m.id) return;
 

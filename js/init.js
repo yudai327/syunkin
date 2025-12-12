@@ -92,6 +92,32 @@ function init() {
         });
     }
 
+    const btnHeaderMenu = document.getElementById('btn-header-menu');
+    const headerControls = document.querySelector('.header-controls');
+    if (btnHeaderMenu && headerControls) {
+        btnHeaderMenu.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent immediate closing
+            headerControls.classList.toggle('mobile-open');
+        });
+
+        // Close menu when clicking inside (e.g. on a button)
+        headerControls.addEventListener('click', (e) => {
+            // If clicked element is likely an action (button, link, label), close menu
+            if (e.target.closest('button') || e.target.tagName === 'A' || e.target.tagName === 'LABEL') {
+                headerControls.classList.remove('mobile-open');
+            }
+        });
+
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (headerControls.classList.contains('mobile-open') &&
+                !headerControls.contains(e.target) &&
+                !btnHeaderMenu.contains(e.target)) {
+                headerControls.classList.remove('mobile-open');
+            }
+        });
+    }
+
     // Help Modal
     initHelpModal();
 

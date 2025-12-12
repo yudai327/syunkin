@@ -69,7 +69,8 @@ body {
     justify-content: space-between;
     padding: 0 24px;
     box-shadow: var(--shadow-sm);
-    z-index: 10;
+    position: relative;
+    z-index: 3000;
 }
 
 .logo-area {
@@ -1809,4 +1810,123 @@ body {
     width: 140px;
     /* Reduced specific width */
     min-width: 120px;
+}
+
+/* Mobile Labels (Hidden by default) */
+.mobile-label {
+    display: none;
+    font-size: 0.9rem;
+}
+
+.mobile-label-inline {
+    display: inline-block;
+}
+
+
+/* Responsive Header Menu (Tablet/Mobile) */
+@media (max-width: 1024px) {
+    #btn-header-menu {
+        display: flex !important;
+        margin-left: auto;
+        margin-right: 8px;
+    }
+
+    .header-controls {
+        display: none;
+        position: absolute;
+        top: 60px;
+        left: 0;
+        right: 0;
+        background: white;
+        flex-direction: column;
+        align-items: stretch;
+        /* Use full width */
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        z-index: 2000;
+        /* High enough to cover sticky table headers */
+        gap: 16px;
+    }
+
+    .header-controls.mobile-open {
+        display: flex;
+    }
+
+    /* Show labels in mobile menu */
+    .header-controls.mobile-open .mobile-label {
+        display: inline;
+    }
+
+    .header-controls.mobile-open .mobile-label-inline {
+        display: inline-block;
+        margin-right: 8px;
+    }
+
+    /* Force buttons to be comfortable rows */
+    .header-controls.mobile-open .btn {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px 16px;
+        gap: 12px;
+        /* Consistent gap between icon and text */
+    }
+
+    /* Remove existing margins if any to rely on gap */
+    .header-controls.mobile-open .btn i {
+        margin-right: 0;
+    }
+
+    .header-controls.mobile-open .btn span {
+        margin-left: 0;
+    }
+
+    /* View Toggle Group */
+    .header-controls.mobile-open .view-toggle {
+        flex-direction: column;
+        width: 100%;
+        gap: 8px;
+    }
+
+    /* Strength Selector Container */
+    .header-controls.mobile-open .control-group {
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .header-controls.mobile-open .select-strength {
+        flex: 1;
+        padding: 10px;
+        /* Larger touch target */
+    }
+
+    /* Action Buttons Container */
+    .action-buttons {
+        flex-direction: column;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .month-nav {
+        width: 100%;
+        justify-content: center;
+        margin-bottom: 8px;
+        /* Make arrow buttons bigger */
+    }
+
+    .month-nav .btn {
+        width: 44px;
+        /* Fixed width for nav buttons */
+        justify-content: center;
+    }
+
+    .input-month {
+        flex: 1;
+        max-width: 200px;
+        text-align: center;
+    }
 }
